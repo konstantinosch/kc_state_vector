@@ -14,6 +14,110 @@ sources, the server-held protocol and the operational extensions below are propo
 The publication provides the mechanism, worked examples and implementation requirements. Implementers must
 validate the supported plans against their own source adapters and workloads.
 
+### How to read this document
+
+Start with the small core; add only the capabilities your result needs. The full reference
+remains here, but it is not a checklist of features every implementation must support.
+
+| Reading path | What you get |
+|---|---|
+| [Part 1 — The small core](#part-1--the-small-core) | two ordinary staged scans, consumed positions, explicit coverage, safe pruning and the conditions for exactness |
+| [Part 2 — Optional capabilities](#part-2--optional-capabilities) | alternative coverage representations, prepared sources, reservations, grouping, horizons, merging and the extended examples |
+| [Part 3 — Integration and reference](#part-3--integration-and-reference) | storage choices, required request/source contracts, hydration, failure handling, engine guidance, optimization and operations |
+
+Authorization, stable ordering, reliable exhaustion and honest state limits are correctness
+requirements, not optional features. Part 1 states them; Part 3 supplies implementation detail.
+Numbered rule references throughout the document point to [Rules](#rules).
+
+---
+
+## Part 1 — The small core
+
+### What it is
+
+**Explicit continuation for a server-defined query plan.** The server defines the sources, their
+order, their budgets and their result semantics. The vector records the execution state needed
+to resume that plan. Its transition rules determine how each selected or skipped candidate
+changes that state, including exclusions, reservations and safe pruning.
+
+### The smallest useful version
+
+Begin with two sources served in a fixed stage order. Each source yields each eligible item once,
+as an ID in a stable total order, such as `(sort_key, id)` descending. Every occurrence of an item
+has the same identity and position across those sources. The first stage may have a selection quota;
+the second supplies the remaining eligible items. Keep the plan and eligibility fixed for the chain.
+
+The execution state has four jobs:
+
+| State | Why it is needed |
+|---|---|
+| Current stage and completion status | know which source runs next and which sources can still encounter an item |
+| Consumed cursor per source | resume after the last candidate actually reached, including skipped candidates |
+| Explicit item exclusions with their positions | remember earlier selections while another scan can still encounter them |
+| Selected counts where a stage has a quota | stop that stage after its declared share, not after counting skipped duplicates |
+
+The continuation also identifies its plan, reader and scope, and retains any fixed visibility
+boundary required by that plan. Validate that binding and the state before querying; recheck
+current access before delivery. The detailed [scope and guarantees](#scope-and-guarantees)
+apply to this baseline as well as its extensions.
+
+For a concrete example, the priority source contains #51, #49 and #48, but has only two slots.
+The remaining source contains #52 down to #48. Page size is three:
+
+| Page | Selected IDs | State that matters afterwards |
+|---|---|---|
+| 1 | #51, #49, #52 | priority is done; the remaining scan is at #52 and must still exclude #51 and #49 |
+| 2 | #50, #48 | the remaining scan skips #51 and #49 as it passes them; #48 was never selected earlier and stays eligible |
+
+That is the core benefit: preserve the exact overlap still ahead of the remaining scan, rather
+than excluding the whole priority category. Once no remaining consumer can encounter an entry,
+forget it. Grouping, reservations, prepared buffers, horizons and merging extend this mechanism;
+none is needed to implement this example. Where the vector is stored is a separate
+[integration choice](#where-the-vector-lives).
+
+### The core page loop
+
+This is a logical selection loop for the simple staged, ungrouped case. A source adapter can
+fetch candidates in batches; the consumed cursor still advances only over candidates the loop
+actually reaches. Page size and request candidate budget are positive validated limits.
+
+```
+authenticate the request; load and validate its bound vector and plan
+work on a tentative copy; page = []; remaining = the request candidate budget
+while the page has room and a stage remains and remaining > 0:
+    if the stage's selection quota is spent: mark it done; move on; continue
+    get the next ordered candidate, or proof that this source is exhausted
+    if exhausted: mark this stage done; move on; continue
+    if the read is incomplete: discard the tentative page; return a read error
+    decide whether the candidate is excluded by earlier selections
+    advance this source's consumed cursor; remaining -= 1
+    if the candidate is not excluded:
+        append its ID to the page; increment this stage's selected count
+        remember its ID and position if another remaining scan can encounter it
+    if this stage's selection quota is now spent: mark it done; move to the next stage
+    after this candidate's decision, prune coverage no remaining consumer can encounter
+    if required state exceeds capacity: discard the tentative page and report a capacity error
+prune coverage whose remaining consumers are now done
+check the chosen protocol's final limits; encode a continuation only if a stage remains
+return selected IDs and the next vector, or an explicit end if every stage is done
+```
+
+This baseline fails an incomplete read without accepting tentative progress. It must not fall
+through as a candidate or silently advance an unknown cursor. Check exclusions after each
+earlier selection, including selections from the same fetched batch. Make the current candidate's
+duplicate decision before retiring its exclusion: reaching an excluded position does not make
+that candidate safe to emit. Unstarted stages count as remaining consumers.
+
+A candidate limit can leave a short or empty page with continuation. A source ends only on
+proven exhaustion or a spent selection quota; a full batch or empty output is not proof of the
+whole plan's end. This budget limits application candidates, not hidden database or search work.
+
+The storage adapter publishes a successful transition under its token or revision/replay
+contract. Capacity failure, including a final encoded-size failure, leaves the accepted
+continuation unchanged. Payload hydration and final access checks follow selection under the
+[hydration policy](#access-checked-again-at-hydration); they can shorten delivered output.
+The [expanded page loop](#how-a-page-is-built) adds the optional operators described next.
+
 ### Scope and guarantees
 
 An exact traversal requires fixed eligibility and sort positions, consistent identities across
@@ -35,62 +139,7 @@ by the plan are separate result semantics, not an invisible storage optimization
 
 Use this for forward traversal with stable sort keys. Relevance rankings that change, random page
 access and exact totals need other mechanisms. A single ungrouped source usually needs only an
-ordinary keyset cursor. The detailed limits are in Part 4.
-
-- **Part 1 — The mechanism:** what it is, where the vector lives, what it carries, the vector as
-  an object, the page loop, and how it evolves across stages over many pages.
-- **Part 2 — Grouped results:** one row per group — groups that enter the vector big and are
-  consumed, a horizon that makes plain and grouped lists one parameter, and the case where nothing
-  needs carrying.
-- **Part 3 — Uses:** deterministic ordered stages, and the shapes it fits.
-- **Part 4 — Implementing it:** the decisions the pattern leaves to the implementation — the
-  client-held token or server-held protocol, plan changes, access, positions, the cap, testing,
-  operating it — and when not to use it.
-- **Examples** — at the end.
-
-Rule numbers refer to Part 1, "Rules".
-
----
-
-## Part 1 — The mechanism
-
-### What it is
-
-**Explicit continuation for a server-defined query plan.** The server defines the sources, their
-order, their budgets and their result semantics. The vector records the execution state needed
-to resume that plan. Its transition rules determine how each selected or skipped candidate
-changes that state, including exclusions, reservations and safe pruning.
-
-An implementation combines that core with a storage and request protocol:
-
-| Layer | What it is | What it decides |
-|---|---|---|
-| **Structure** | the vector: anchor, cursors, exclusions with expiry positions, prepared lists, counters | what must be remembered, and its bounds |
-| **Algorithm** | the page loop and its transition rules: staged or merged sources, reserve, skip, prune, emit | how selection advances correctly and what a page costs |
-| **Storage and protocol** | client-held authenticated state, or a server-held vector addressed by a handle and revision | how state is recovered, requests are bound, and retries are handled |
-
-The structure and algorithm are the core mechanism; placement changes its operational contract.
-The plan can be **suspended after a page and resumed by a compatible server with access to the
-required state and sources**. A client-held token supplies the state with the request. A
-server-held handle requires a successful lookup in the appropriate state store.
-
-**Every part of the vector represents a plan operator's continuation state.** The supported
-composition is ordered scans, concatenation or sorted merge, de-duplication, filters and limits,
-with explicitly bounded prepared buffers. Arbitrary joins, aggregation or re-sorting are not
-covered by this description; an adapter must establish its own order and resumable state.
-
-| In the vector | The operator whose state it is |
-|---|---|
-| cursor per source | the position of an ordered index scan (keyset / seek) |
-| stage | which child of an ordered concatenation (`UNION ALL` in order) is running |
-| merge heads | the heads of a sorted merge (Merge Append) |
-| exclusions with expiry | de-duplication state: an entry can be removed once no remaining scan can encounter what it represents |
-| predicate exclusions | a pushed-down `NOT` filter that replaces anti-join state entirely |
-| budgets and counters | a `LIMIT` per child |
-| prepared lists | a complete bounded source or a refillable buffer for a later scan |
-| reservations | sets assigned to a stage that other declared consumers must leave for it; often derived from a prepared list |
-| anchor | a visibility boundary (`seq ≤ anchor`) when all eligible writes through it are already visible; it does not freeze attributes |
-| presentation | a projection after the plan, outside its state |
+ordinary keyset cursor. See [When not to use it](#when-not-to-use-it) and [The cap](#the-cap).
 
 **The intended properties, with their conditions:**
 
@@ -118,20 +167,59 @@ covered by this description; an adapter must establish its own order and resumab
   reader, scope and plan, then validate the vector before querying. Client-held state also needs
   integrity protection. Neither a token nor a server-held handle grants permission to read an item.
 
-**Where it stands among known techniques.** Related techniques include keyset pagination,
-[`search_after`](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/paginate-search-results),
-[Cosmos DB continuation tokens](https://learn.microsoft.com/cosmos-db/query/pagination),
-[watermark-based deduplication](https://spark.apache.org/docs/latest/streaming/apis-on-dataframes-and-datasets.html#streaming-deduplication),
-[per-key session windows](https://beam.apache.org/documentation/programming-guide/#session-windows),
-and [opaque, request-bound page tokens](https://google.aip.dev/158). These are comparisons for
-resuming execution, retiring state and defining episodes; their guarantees differ. A search PIT
-retains engine-side snapshot state, and streaming watermarks rely on lateness assumptions rather
-than proof that every remaining scan has passed an entry. The gap boundary here is explicitly
-`gap >= H`, not an assertion about every session-window implementation.
+### The final stage as a sweeper
 
-This pattern describes their composition into staged or merged sources with overlap tracking,
-predicate exclusions, prepared sources and explicit continuation rules. Page size bounds output
-rows; candidate work, retained state, source count and group hydration need their own bounds.
+If the final stage needs no duplicate suppression within its own output, it acts as a **sweeper**.
+It applies inherited exclusions, selects the remaining items, and prunes entries as their covered
+sets become unreachable. Its newly selected rows need no exclusion entries: there is no later
+stage to encounter them, and its own continuation already prevents repeat selection.
+
+For a single ordered scan returning each item once, the keyset cursor provides that continuation.
+Grouped rows or overlapping merged sources may still need internal exclusions, so being last
+alone is not enough. An inherited group span also remains active until every remaining applicable
+scan has passed its covered members; meeting its first duplicate does not retire the whole span.
+
+Under the fixed-data assumptions, this sweeper only removes inherited coverage entries and adds
+none of its own. Their live count cannot increase. This does not promise that the encoded token
+shrinks on every page: counters, cursor encodings and compression can change its size. Category
+predicates remain while they can still exclude candidates, even after all item or span lists
+have drained. At chain completion, no continuation token is needed.
+
+### When not to use it
+
+- **Results ordered by relevance.** A search engine's scores use statistics over the whole corpus,
+  which change as documents arrive, so the order moves even below the anchor. Use the engine's
+  point-in-time snapshot there.
+- **Sort keys that change often** — a "last activity" order where every change moves the item.
+  The declared exception becomes the common case.
+- **Totals and random access** ("page 37 of 120"): the pattern pages forward only.
+- **Small lists** that fit in one request.
+- **One ordered source, with no grouping and no composition:** plain keyset pagination is the
+  same thing with less machinery.
+
+---
+
+## Part 2 — Optional capabilities
+
+### Optional capabilities at a glance
+
+Choose capabilities from the result semantics you need. The following material is the expanded
+reference, not a requirement to implement every field or operator. Each chosen capability must
+preserve the core invariants or explicitly declare the different result it defines.
+
+| Capability | Add it when | Start here |
+|---|---|---|
+| Coverage described by groups, tags or prefixes | the domain supplies a compact, correct membership test | [Exclusions describe sets of items](#exclusions-describe-sets-of-items) |
+| Prepared sources and buffers | a bounded source can be loaded early, or candidate buffering is useful | [Prepared sources and refill](#prepared-sources-and-refill) |
+| Reservations | another stage must leave a set for its future owner | [Reservations for a later stage](#reservations-for-a-later-stage) |
+| Grouped rows and episodes | one selected row represents several underlying items | [Grouped results](#grouped-results--one-row-per-group) |
+| Time or count horizons | recurrence after a declared boundary is part of the result | [Gap horizon](#the-horizon--the-gap-rule-and-plain-and-grouped-as-one-parameter) and [count horizon](#the-count-horizon) |
+| Ordered merging | several ordered sources must contribute interleaved results | [Examples](#examples), especially Example 4 |
+
+Approximate eviction changes traversal guarantees and is described separately under [The cap](#the-cap).
+Encoding optimizations preserve logical state and belong under [compact exclusions](#optimization--compact-exclusions).
+The existing worked loops and JSON traces below illustrate the client-held protocol; the same
+logical vectors can be retained server-side. The small core above is independent of that choice.
 
 ### The problem it solves
 
@@ -150,38 +238,38 @@ The vector makes that continuation state explicit. It can be retained in an appl
 or carried with each request. Neither location alone establishes a consistent view of changing
 data; the visibility and mutation conditions still apply.
 
-### Where the vector lives
+### How capabilities map to the vector
 
-**The vector and its rules are the mechanism; storage placement is an architectural choice.**
-Given the same vector, plan, request and data, the selection rules do not depend on whether the
-vector came from a token or a state store. The request and failure contracts do differ:
+**Every part of the vector represents a plan operator's continuation state.** The supported
+composition is ordered scans, concatenation or sorted merge, de-duplication, filters and limits,
+with explicitly bounded prepared buffers. Arbitrary joins, aggregation or re-sorting are not
+covered by this description; an adapter must establish its own order and resumable state.
 
-| Choice | What the client carries | What the server retains between requests | Main tradeoff |
-|---|---|---|---|
-| **Client-held** | an authenticated token containing the vector | no application record of that scroll is required | token bytes and repeated encoding/decoding in exchange for independent request handling |
-| **Server-held** | an opaque handle identifying the chain and requested revision | the vector, its binding and lifecycle metadata, plus any retry information required by the protocol | small client continuations in exchange for session storage and coordination |
-
-Here **stateless** means no application session store is required for continuation. It does not
-mean the vector, database, configuration or signing keys cease to exist. An optional engine
-snapshot can also retain state independently of where the application keeps the vector.
-
-Server-held vectors may live in process-local RAM or a shared store. A handle identifies stored
-state; a signature can protect a handle but cannot replace missing state or current authorization.
-Part 4's [server-held protocol](#server-held-continuation) describes revision checks, replay,
-concurrency and expiry. Neither version guarantees exactly-once receipt or display by the client.
-
-**Reading the examples.** The worked page loops, token encodings and JSON traces use the
-client-held version unless stated otherwise. The traces show the same logical state a server
-could retain. Token-specific validation and serialization wrap the shared selection rules;
-server-held implementations use lookup and coordinated publication instead.
+| In the vector | The operator whose state it is |
+|---|---|
+| cursor per source | the position of an ordered index scan (keyset / seek) |
+| stage | which child of an ordered concatenation (`UNION ALL` in order) is running |
+| merge heads | the heads of a sorted merge (Merge Append) |
+| exclusions with expiry | de-duplication state: an entry can be removed once no remaining scan can encounter what it represents |
+| predicate exclusions | a pushed-down `NOT` filter that replaces anti-join state entirely |
+| budgets and counters | a `LIMIT` per child |
+| prepared lists | a complete bounded source or a refillable buffer for a later scan |
+| reservations | sets assigned to a stage that other declared consumers must leave for it; often derived from a prepared list |
+| anchor | a visibility boundary (`seq ≤ anchor`) when all eligible writes through it are already visible; it does not freeze attributes |
+| presentation | a projection after the plan, outside its state |
 
 ### What the vector carries
+
+This is the full field inventory. The
+[smallest useful version](#the-smallest-useful-version) needs only the state for its chosen
+operators; prepared lists, reservation state, grouping entries and presentation state are not
+mandatory for every plan.
 
 | Part | What it is | Bound |
 |---|---|---|
 | **version** | the format's version, so it can change without breaking chains in flight | — |
 | **anchor** | the boundary fixed when the chain starts; strict arrival stability requires a visibility watermark, not merely an allocated sequence or timestamp | one value, or one per source (Example 4); separate watermarks do not imply one transactional snapshot |
-| **stage** | which source is being served (the ordered list of sources is the server's, not carried). Sources can also be **merged** instead of staged: each page then takes the newest head across their cursors (Examples 4) | one value |
+| **stage** | which source is being served (the ordered list of sources is the server's, not carried). Sources can also be **merged** instead of staged: each page then takes the newest head across their cursors (Example 4) | one value |
 | **cursor per source** | the keyset position of the last item the source **consumed** — served or skipped — never one that was fetched and not reached | one tuple per source |
 | **done** | completed stage/source identifiers, separate from their terminal cursor positions | one status per source |
 | **exclusions** | entries grouped by the stage that produced them; item identities, rolling group entries or fixed spans, used by every applicable remaining scan | safe pruning reduces live entries; a size limit needs an explicit overflow policy |
@@ -192,6 +280,9 @@ server-held implementations use lookup and coordinated publication instead.
 | **presentation** | what display reordering needs across pages | never read by selection |
 
 ### What each stage declares
+
+This is the expanded stage contract. For the small core, grouping is the item itself and no
+group horizon is needed; additional parameters describe the capabilities selected by the plan.
 
 The server's plan names its stages in order, and each stage declares four parameters. These
 belong to the plan, like the order of the stages (rule 4); the continuation is bound to that plan
@@ -204,28 +295,28 @@ window on each page. The server still defines the window rule and validates its 
 
 | Parameter | What it says | Forms |
 |---|---|---|
-| **grouping** | what one row stands for | the item itself, or a group key (Part 2) |
+| **grouping** | what one row stands for | the item itself, or a group key ([grouped results](#grouped-results--one-row-per-group)) |
 | **window** | which items the stage covers at all | a recency ("this month"), a state ("open"), a count ("the newest 1,000") |
 | **budget** | how many rows the stage may serve in one chain | a count |
 | **horizon** | how long a served row keeps its group out, behind the scroll position | a time, a count, or both |
 
 **The two kinds of horizon do two different jobs.**
 - **A time horizon gives a meaning:** a group that stayed silent for H or longer comes back as a
-  row of its own — the gap rule (Part 2). It is what a reader sees as a group revived, so it is
+  row of its own — the gap rule ([grouped results](#grouped-results--one-row-per-group)). It is what a reader sees as a group revived, so it is
   chosen from how the groups actually live.
 - **A count horizon defines limited suppression:** an entry expires after R subsequent rows have
   been selected, with a fixed birth count that is never renewed. This can allow another row for
   the same group even within a time episode. It is a declared result policy, including how these
   rows consume stage budgets, not an exact substitute for unlimited group suppression. It bounds
-  live entries by R + 1 when pruning is performed before each candidate (Part 4).
+  live entries by R + 1 under the [count-horizon transition rule](#the-count-horizon).
 - **Both:** an entry ends at whichever comes first.
 
 **A recency or count window bounds its own exclusions.** Every entry such a stage creates lies
 inside its window, so once the later stages scan past the window's edge, all of them have
 expired. A state window ("open") is spread across the whole order, so its entries expire like any
 other. And when the later stages can test the window's condition themselves, they exclude the
-whole stage by predicate (rule 6, in one of the two forms of "The result a plan defines", below)
-and carry nothing — S4 does that with S2's labels in the trace below.
+whole stage by predicate (rule 6, in one of the two forms of "The result a plan defines")
+and carry nothing — S4 does that with S2's labels in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages).
 
 **With a compact group representation, each selected row can create one exclusion entry.**
 Expanding a represented group into individual item exclusions can create many entries instead.
@@ -348,7 +439,7 @@ define it:
   coincide under those conditions. A predicate need not live on the row to be correct; its cost
   determines whether it is worth using.
 
-  The trace below uses the whole-category quota: S4 excludes S2's labels, so 85·r, beyond S2's
+  The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) uses the whole-category quota: S4 excludes S2's labels, so 85·r, beyond S2's
   budget, is outside that plan's result.
 - **The canonical result is fixed by the plan, fixed data and anchor.** Page size and batching
   must not change it. Specify horizon transitions and any approximate eviction policy independently
@@ -374,13 +465,13 @@ buffer entries to fit a storage or token limit. Preparation and refill reads nee
 work limits.
 
 Alternatively, define a fixed shortlist as the stage's entire source, or overfetch by a proven
-bound on earlier overlap. State that choice. The worked S3 trace uses its entire four-item source,
+bound on earlier overlap. State that choice. S3 in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages) uses its entire four-item source,
 so no refill is needed; its `loaded` flag and offset are sufficient.
 
 ### Reservations for a later stage
 
 **A reservation means "leave this set for its owning stage", not "this set has already been
-served".** Preparation alone does not confer ownership: in the example above, an earlier stage
+served".** Preparation alone does not confer ownership: in the [prepared-source example](#prepared-sources-and-refill), an earlier stage
 may take A from a prepared list. A plan can instead reserve a later stage's items before an
 earlier overlapping scan starts. The exclusion test then applies to the stages that must yield,
 while the owner ignores its own reservation and still checks ordinary duplicate exclusions.
@@ -434,22 +525,13 @@ The bound plan declares the owner, the stages that yield, the reserved set and i
 
 Reservation preparation and retained state have their own work and size limits. Their membership,
 ownership and transitions must not depend on page size or batch boundaries. Live deletions and
-access changes still have the limitations described in Part 4.
-
-### Choosing the values — from the data
-
-None of these values can be chosen on paper: each is a property of the data and of how people
-read it. Each stage needs the same few measurements:
-
-| Measurement | What it sets |
-|---|---|
-| the size of the stage's set per reader — median, p99, largest | the budget; whether later stages can exclude the whole set by predicate |
-| the arrival rate, and the spans and gaps of the stage's groups | a time horizon: just above the gap that live groups rarely cross |
-| how deep chains go — pages per chain, from the request logs | the cap, and a count horizon: above the depth most chains reach |
-| the skip ratio — candidates scanned per row served | what a page really costs |
-| the live entries over the scroll — average and peak (Little's law: average = arrival rate × entry life) | the state cap, token bytes or server memory budget |
+access changes still have the limitations described under [integration and reference](#part-3--integration-and-reference).
 
 ### The vector as an object
+
+This reference example includes optional
+prepared-source and predicate state. It shows their composition, rather than a minimum schema
+every implementation must carry.
 
 ```json
 {
@@ -488,27 +570,31 @@ Entry types are explicit; `position` is always `[sortKey, id]`:
 
 Validate each kind's arity, types, ordering and compatibility with its plan. Span bounds must be
 ordered and are part of the entry's identity. A count horizon adds `born` to the applicable entry
-and carries the chain's selected-row count (Part 4). An implementation must version its complete
-schema; these examples omit the client-held token envelope and server-held binding/revision metadata
-described in Part 4.
+and carries the [chain's selected-row count](#the-count-horizon). An implementation must version
+its complete schema; these examples omit the client-held token envelope and server-held binding/revision metadata
+described under [integration and reference](#part-3--integration-and-reference).
 
 For readability, the homogeneous item trace below abbreviates `["item", position]` to `position`.
-Part 2 also uses explicit **single-source shorthand**: `cursor: P` and `excl: E` stand for
+The grouped examples also use explicit **single-source shorthand**: `cursor: P` and `excl: E` stand for
 `cursor: {"scan": P}` and `excl: {"scan": E}` with implicit stage `scan`. A staged or multi-source
 vector uses maps. These abbreviations are document notation, not alternate wire formats to infer
 from untrusted input.
 
 In the client-held version, the wire format is
-`v1.<key id>.base64url(deflate(json)).base64url(hmac)` — opaque to the client (Part 4, "The token").
+`v1.<key id>.base64url(deflate(json)).base64url(hmac)` — opaque to the client ([The token](#the-token)).
 The server-held version keeps the vector behind a handle and revision instead.
 `presentation` holds what display needs across pages — here the last row's group, so the next
 page can keep two rows of one group apart (rule 10); selection never reads it.
 
 ### How a page is built
 
+This is the expanded reference loop. Preparation,
+reservation and horizon operations apply only when the plan selects those capabilities; the
+[core page loop](#the-core-page-loop) shows the smaller baseline.
+
 This loop illustrates the client-held protocol around the shared selection rules. A server-held
 implementation loads and validates the stored vector before selection, then publishes the result
-through the revision and replay contract in Part 4 instead of serializing the vector to the client.
+through the revision and replay contract under [integration and reference](#part-3--integration-and-reference) instead of serializing the vector to the client.
 
 ```
 validate the vector (signature, version, then every field)
@@ -559,7 +645,7 @@ return the page and, only if hasMore, its continuation token
   adaptively when many candidates are skipped. Unconsumed overfetch is re-read, or retained in a
   prepared buffer with a separate fetch cursor; it never advances the consumed cursor.
 - **The exclusions it implies:** the served item's id at its position, for the later stages that
-  can meet it again; for a grouped stage, its group (Part 2). Remaining scans include the current
+  can meet it again; for a grouped stage, its group ([grouped results](#grouped-results--one-row-per-group)). Remaining scans include the current
   stage's continuation. If none can need the new coverage, no exclusion entry is required.
 - **Exhaustion:** a complete source query returning fewer than K candidates proves there are no
   more for that source under its query conditions. A timeout, partial shard response or cleaned
@@ -662,326 +748,30 @@ S4 creates no exclusions for its own rows. By page 5 it has drained the earlier 
 S2's category predicate remains applicable. A refresh starts a new chain with a new watermark
 that includes h, and h appears at the top.
 
-### The final stage as a sweeper
+### Grouped results — one row per group
 
-If the final stage needs no duplicate suppression within its own output, it acts as a **sweeper**.
-It applies inherited exclusions, selects the remaining items, and prunes entries as their covered
-sets become unreachable. Its newly selected rows need no exclusion entries: there is no later
-stage to encounter them, and its own continuation already prevents repeat selection.
+This optional capability changes what a selected row represents. It keeps the consumed-cursor
+and coverage invariants, while adding the membership and lifetime rules below.
 
-For a single ordered scan returning each item once, the keyset cursor provides that continuation.
-Grouped rows or overlapping merged sources may still need internal exclusions, so being last
-alone is not enough. An inherited group span also remains active until every remaining applicable
-scan has passed its covered members; meeting its first duplicate does not retire the whole span.
-
-Under the fixed-data assumptions, this sweeper only removes inherited coverage entries and adds
-none of its own. Their live count cannot increase. This does not promise that the encoded token
-shrinks on every page: counters, cursor encodings and compression can change its size. Category
-predicates remain while they can still exclude candidates, even after all item or span lists
-have drained. At chain completion, no continuation token is needed.
-
-### Rules
-
-1. **The vector and its rules define continuation.** Choose where the vector lives. The client
-   returns its opaque token or handle/revision unchanged and follows continuation even after an
-   empty page. Only the client-held version avoids an application session store.
-2. **Bind and protect continuation state.** Bind the **tenant, user and list identity** — including
-   plan version, query and filters — to the vector. Authenticate client-held payloads and verify
-   that binding before decompression. A signature stops tampering but does not encrypt the
-   contents; use authenticated encryption when confidentiality is needed. For server-held state,
-   check the stored binding before using the vector or replaying a result; an opaque or signed
-   handle is not authorization. Recheck actual access on every request and at hydration (Part 4).
-   A valid same-scope replay is handled by the chosen protocol, not rejected merely for being a replay.
-3. **Integrity or a successful lookup is not enough.** Validate the vector's schema/plan versions,
-   known fields, required stage state, types, ranges, positions and entry kinds before querying.
-   Item identities and rolling-group keys are unique in their appropriate scopes; fixed spans
-   are unique by group and bounds, not group alone.
-4. **The server owns the limits** — the sources, their order, each stage's grouping, window,
-   budget and horizon ("What each stage declares"), and the page-size cap. The client may ask for
-   a page size, nothing more.
-5. **Every resource has an explicit limit and overflow policy.** Prune safely and bound prepared
-   buffers, client-held token bytes, or server-held per-chain and aggregate memory plus retry data.
-   Stop exact traversal if required state cannot fit. A small handle does not bound the state
-   behind it, and a fixed state limit does not guarantee every possible chain can finish.
-6. **Exclude by the widest key that is correct**: a predicate before a group key, a group key
-   before an item id. One entry should cover as much as possible without hiding unrepresented
-   results. A predicate must reproduce the right coverage; its storage and lookup cost are separate.
-7. **Carry only what cannot be recomputed cheaply.** Whatever can be decided from the data and the
-   anchor alone does not belong in the vector (see "Group heads", Part 2).
-8. **Retain required state for exact traversal.** Dropping an exclusion early may create repeats;
-   with finite budgets those repeats may displace distinct results. An approximate mode must state
-   that tradeoff. Expiry justified by the plan's declared horizon is a result rule, while expiry
-   justified by all remaining scans passing the entry is safe pruning.
-9. **Deterministic.** The same vector, plan, request and fixed data give the same page. State
-   transitions happen per candidate or selected row, not only when state is serialized or committed.
-10. **Separate selection, hydration and presentation.** Sources return IDs and stable sort positions,
-    whichever engine answers — a database or a search engine. Group membership may be supplied
-    by a separate bounded metadata lookup during selection; it need not live in the scan index.
-    Prefer bulk hydration after page selection finishes: collect the complete page's IDs of
-    interest and batch the required payload reads per relation or backing service, splitting into
-    bounded chunks where necessary. This gives the payload queries a predictable batch structure
-    and avoids per-candidate reads. One hydration phase may use several queries. This is the
-    recommended default illustrated by the loops, not a required hydration schedule.
-    Presentation reorders the bounded page for display and never touches cursors or exclusions.
-11. **Apply each exclusion where it is cheapest** — in memory in the page loop, as a filter on an
-    ordered scan that stops at the page, or as a merge of sorted document lists in an inverted
-    index. Preserve semantics and required skip-state updates, then compare execution plans and
-    measured costs; a relational anti-join is an option, not a correctness violation.
-12. **The stages of one list share its scope.** The list's filters (views, tags, field matches,
-    access) apply per item, and alike in every stage; a stage's own criterion only decides which
-    items come first. So an item served by any stage is served for the whole list, and every
-    stage can honour every other stage's exclusions.
-
-### Cost
-
-For a single scan with constant-time exclusion lookup, the selection loop does O(P + S) candidate
-checks for P selected rows and S candidates skipped in the application. The scan cap bounds that
-candidate count. It does **not** bound database rows rejected before `LIMIT`, posting-list work,
-query startup, metadata lookups or preparation. A SQL query returning one row can inspect a million
-rejected rows before finding it.
-
-For M merged sources, a heap typically adds O(log M) work per consumed head and source startup
-costs. Client-held token encoding and decoding depend on the live state size. Server-held state
-has lookup, coordination and any persistence or copying costs; schema validation still matters.
-Pruning every entry on every candidate adds cost; an implementation needs suitable ordered expiry
-structures or must account for those scans explicitly.
-
-Hydrating P selected item IDs bounds the item count, not necessarily payload bytes. Expanding P
-groups can involve arbitrarily many members. Full-group or episode discovery, counts and boundary
-lookups need their own indexes, summaries, lazy expansion or work limits. Prepared buffers cost
-both their initial query and any refills, plus retained memory or transmitted bytes between requests.
-
-Use separate budgets and metrics for application candidates, source reads/deadlines, metadata,
-hydration, state memory and transmitted bytes. A deadline must not turn an incomplete query into
-false exhaustion.
-These are algorithmic costs and implementation requirements, not measured engine benchmarks.
-
-#### Computation, memory and communication
-
-Placement changes the tradeoff between these three resources. Remembering explicit IDs can make
-membership checks cheap while enlarging state. Recomputing coverage reduces retained state but
-adds lookup work. Group spans or predicates can represent the same set compactly, with their
-own membership costs. Those choices apply to either storage placement.
-
-A client-held vector travels out with a response and back with the next request, so its size is
-a recurring network cost. Server-held state reduces that client traffic and may retain useful
-sets or heaps across requests. Process-local RAM requires requests to reach its owner; a shared
-store can move vector reads and writes onto the internal network. Keeping state server-side
-does not automatically eliminate serialization or communication costs.
-
-Measure both bytes and round trips, alongside CPU, memory per active chain and total concurrent
-state. Include replay records, buffers, object overhead and any replicas. Bulk hydration can
-reduce payload-query round trips independently of where the vector lives. The final-stage
-sweeper reduces retained coverage in either version: it saves token space or server memory.
-
-### Where exclusions are applied
-
-**Preserve an efficient ordered access path where possible.** In the access paths below, the
-positive query supplies candidates and exclusions remove matches. An ordered scan can stop after
-enough surviving rows, although it may inspect many rejected rows first. Sorting, exact counting,
-joins and aggregations can add work beyond the page; inspect the actual execution plan rather than
-inferring a fixed cost from `LIMIT` alone.
-
-How the check is made depends on the kind of index:
-
-- **An ordered index — a B-tree, in SQL.** It finds what **is** there; it cannot seek to
-  "everything except these". The exclusion is a filter on each row the range scan reads. The scan
-  can supply the result order when the index supports the `ORDER BY`; a limit can then stop it
-  after enough surviving rows. Index direction, equality prefixes and planner choices matter.
-- **An inverted index — a search engine.** For every term it keeps a posting list: the sorted ids
-  of the documents that have it. A query walks these lists together — AND intersects them, OR
-  merges them, NOT removes one list's documents from another — each a **merge of sorted document
-  lists** that skips ahead rather than reading every entry. Engines cache frequently used filters
-  as bitsets, an optimisation on top of the merge. The lists are in document order, not time
-  order. Matching index sorting can enable early termination per segment when exact hit counts
-  and aggregations do not require further collection; it is not a universal bound on index work.
-
-Hence three places, each right for one kind of exclusion:
-
-| Where | Right for | Cost |
-|---|---|---|
-| **in memory, in the page loop** | the vector's own pruned entries, especially rolling state that must see skips | a set lookup in the application; rejected candidates still cost source reads and transfer |
-| **a filter on an ordered scan** — `id <> ALL($1)` with the pruned list | a short list, or a category cheaply available on the row | source work includes rejected rows; inspect `EXPLAIN (ANALYZE, BUFFERS)` on representative data |
-| **an inverted-index filter** — `must_not` | categories or identities indexed as document terms | posting-list and collection work depends on distribution, segments and the query; matching index sorting can help |
-
-Two query forms deserve particular care:
-- **A relational anti-join**, often expressed as `NOT EXISTS`, may add indexed probes per candidate
-  or a hash build before scanning. It can also be a good plan. Compare its cost with denormalizing
-  a category onto the row/document, including update consistency and write costs. The group-head
-  alternative in Part 2 deliberately uses a relational lookup.
-- **`NOT IN (subquery)`** has NULL-sensitive semantics. For intended anti-existence behavior,
-  `NOT EXISTS` usually expresses the requirement more directly; the two are not interchangeable
-  without accounting for NULLs. Planner support also varies by version and expression.
-
-PostgreSQL documents hash lookup for long constant `IN` lists in version 14 and `NOT IN` lists
-in version 15. This does not establish the same optimization for every parameterized array or
-generic plan. The version 19 development release notes describe conversion of eligible `NOT IN`
-subqueries to anti-joins; as checked on 19 November 2026, that version was still labelled a
-development release. Treat it as version-specific, not a portable guarantee.
-[PostgreSQL 14](https://www.postgresql.org/docs/14/release-14.html),
-[PostgreSQL 15](https://www.postgresql.org/docs/15/release-15.html),
-[PostgreSQL 19](https://www.postgresql.org/docs/19/release-19.html),
-[subquery NULL semantics](https://www.postgresql.org/docs/18/functions-subquery.html).
-
-#### Example — one exclusion, two engines
-
-Page 5 of the trace above: S4 continues below its cursor 92·y. The page needs items at or before
-the anchor (sequence 9000), below the cursor, not d, e or w (the ids still ahead of the cursor),
-not labelled red or blue (S2's category, a predicate) — the newest 4. The table holds every item
-of the trace.
-
-**SQL (Postgres).** The labels are stored on the row, as `labels text[] NOT NULL DEFAULT '{}'`;
-the index is `(sort_key DESC, id DESC)`.
-
-```sql
-SELECT id, sort_key
-FROM items
-WHERE seq <= 9000                              -- the anchor
-  AND (sort_key, id) < (92, 'y')               -- the cursor
-  AND id <> ALL ('{d,e,w}')                    -- the ids still ahead of the cursor
-  AND NOT (labels && '{red,blue}')             -- the category, read from the row
-ORDER BY sort_key DESC, id DESC
-LIMIT 4;
-```
-
-If the planner chooses the intended ordered index scan, the illustrative walk is 92·o, 91·p
-(labelled), 90·d (excluded), 89·q (labelled), 88·e, 87·w (excluded), 86·z (served), 85·r (labelled),
-84·z2, 82·z3, 80·z4 (served): 11 fixture entries for four results. This is a hand trace, not an
-execution-plan measurement. NULL-sensitive conditions can silently exclude rows, so the example
-uses non-NULL IDs/labels and validation rejects NULL identities in the exclusion list.
-
-An alternative keeps the labels in a relation table:
-
-```sql
-  AND NOT EXISTS (SELECT 1 FROM item_labels l
-                   WHERE l.item_id = items.id AND l.label IN ('red', 'blue'))
-```
-
-An indexed-probe plan adds a lookup in `item_labels` per candidate. A hash anti-join has a different
-startup cost and may choose a different access path. Measure both against the data distribution;
-keeping labels on the row trades those relation lookups for denormalized storage and updates.
-
-**Elasticsearch / OpenSearch.** The same items, the labels as a keyword field, the index sorted
-the way the list is read:
-
-```http
-PUT items
-{
-  "settings": { "index": { "sort.field": ["sort_key", "id"], "sort.order": ["desc", "desc"] } },
-  "mappings": { "properties": {
-    "id":  { "type": "keyword" }, "sort_key": { "type": "long" },
-    "seq": { "type": "long" },    "labels":   { "type": "keyword" } } }
-}
-
-POST items/_search
-{
-  "size": 4,
-  "track_total_hits": false,
-  "query": { "bool": {
-    "filter":   [ { "range": { "seq": { "lte": 9000 } } } ],
-    "must_not": [ { "terms": { "id":     ["d", "e", "w"] } },
-                  { "terms": { "labels": ["red", "blue"] } } ] } },
-  "sort": [ { "sort_key": "desc" }, { "id": "desc" } ],
-  "search_after": [92, "y"]
-}
-```
-
-The query expresses the same fixture result with document fields and `search_after`. Matching
-index sorting and `track_total_hits: false` allow eligible collection to terminate after enough
-matches per segment; they do not imply the same 11 internal reads as the SQL hand trace.
-Index sorting is configured at index creation and has an indexing-throughput cost. Aggregations
-may still collect every match. Check the corresponding engine/version and profile the query.
-[Elasticsearch index sorting](https://www.elastic.co/docs/reference/elasticsearch/index-settings/sorting),
-[OpenSearch index sorting](https://docs.opensearch.org/latest/im-plugin/index-sorting/).
-Costs to watch:
-- counting the hits — `track_total_hits` counts up to 10,000 by default, which keeps the walk
-  going past the page;
-- `from` / `size` instead of `search_after` — every page re-reads all the pages before it;
-- sorting on fields without a matching index sort — other competitive-document optimizations may
-  help, but do not assume the same per-segment early termination.
-
-**A staged list makes this choice per stage** (Part 3). Take a broad last stage that excludes
-the items earlier stages served and everything carrying a reader's chosen labels. On a database
-that can use an ID filter and an indexed anti-join; on a search engine it can use `must_not` over
-IDs and label terms. Either may be appropriate. Choose per stage from measured plans, indexing
-costs, consistency requirements and available ordering, rather than assuming a broad stage
-always belongs on a search engine.
-
-### Optimization — compact exclusions
-
-Exclusion entries can accumulate with the scroll; counters and encoded positions also vary in
-size. For a homogeneous numeric entry list with one scan direction, entries can be stored like
-delta-encoded posting lists: **sorted,
-with the first entry absolute and every later entry as its difference from the previous one**,
-each difference written in as few bytes as it needs (a variable-length integer).
-
-**Why the vector suits it.** The entries are numbers — a position `(time, id)` — kept sorted by
-the position at which they expire, in the scan's own direction (newest first). Sorted means the
-differences are small; newest first means the time differences are never negative. The id
-differences are positive only when ids follow the same order; otherwise they are written zig-zag
-(a sign bit), which variable-length integers allow.
-
-```
-absolute:  (1763100000, 1042) (1763096400, 1040) (1763096400, 1039) (1763010000, 1012)
-encoded:   (1763100000, 1042) (3600, 2)          (0, 1)             (86400, 27)
-bytes:      5 + 2              2 + 1              1 + 1              3 + 1
-```
-
-**The operations stay simple:**
-- **Pruning removes the head.** The scan passes the newest expiries first, so an expired entry is
-  at the front once every applicable consumer has passed the same expiry frontier: the new head
-  is the old head minus the first difference, and that difference is dropped. Approximate
-  furthest-expiry eviction can remove the tail; exact mode does not evict necessary entries.
-- **Inserting in the middle** (a newly served entry that expires between two others) needs no
-  special case in the illustrated client-held encoding: the server decodes the vector for the
-  request, inserts into the decoded list and encodes it again. The differences are only the wire
-  format. A server-held implementation may instead retain a structure suited to in-memory updates.
-- **Validation still matters.** Check nonnegative time deltas, valid tie-breaker deltas when
-  times tie, integer ranges and overflow, decoded positions and entry-kind rules. Distinct episode
-  spans can share a group key; their bounds or episode identities distinguish them.
-
-**When it pays.** Sorted times often give smaller deltas, but byte savings depend on the gaps and
-encoding. The ID column benefits when numeric IDs correlate with that order; insertion order,
-event time and visible group bounds need not coincide. String keys can remain literal while
-numeric position components use delta encoding.
-
-**Keep exact boundaries lossless.** Coarsening timestamps can change membership, episode gaps or
-pruning. Early expiry may introduce repeats that consume finite budgets; widening a span may hide
-unrepresented items. Delta encoding can preserve the original values exactly. Use a coarser key
-only if it is the plan's canonical ordering/episode precision from the outset, with a stable
-tie-breaker and matching source semantics.
-
-For vectors measured in tens or hundreds of entries, variable-length integers may be sufficient.
-Measure actual encoded token sizes before adding block packing or other format complexity; this
-document does not establish a typical or maximum entry count for every workload.
-
-This shrinks each entry. The entries need not all be of one kind: where a stage serves a group
-whole, one span stands for all of the group's items, and the list holds fewer entries (Part 2,
-"Served whole — fixed spans for groups and episodes").
-
----
-
-## Part 2 — Grouped results: one row per group
-
-### The case
+#### The case
 
 A list shows **one row per group**, newest first. Group membership is defined by the application;
 the underlying scan is over individual items. Once a group has been shown, its older items must
 not become rows further down — while items keep arriving across several partitions the viewer
 can see, and with the same item reachable through more than one of them.
 
-### The vector for it
+#### The vector for it
 
-| Part 1 | Here |
+| Shared mechanism | Grouped form |
 |---|---|
 | anchor | a visibility watermark fixed at the first page; event time alone cannot exclude backfills or late arrivals |
 | stage and cursor | one source — the merged scan of the viewer's partitions — and one cursor on `(time, itemId)` |
 | exclusion key | the **group key** — never the item id (rule 6) |
 | exclusion entry | `["group", key, last, oldest]`: full positions of the most recently consumed group item and the oldest eligible group item; skipped members renew `last`; the loop below defines expiry |
-| horizon | the stage's own (Part 1, "What each stage declares"): a time H under the gap rule (below), a count, or both |
-| predicate exclusions | group-level conditions that rule a whole group out — re-evaluated for every candidate, so a group they rule out needs no exclusion entry; the reader-specific values they use can be frozen in the vector, as in Part 1 |
+| horizon | the stage's own ([What each stage declares](#what-each-stage-declares)): a time H under the gap rule (below), a count, or both |
+| predicate exclusions | group-level conditions that rule a whole group out — re-evaluated for every candidate, so a group they rule out needs no exclusion entry; the reader-specific values they use can be frozen in the vector under the [stage contract](#what-each-stage-declares) |
 | presentation | the group's items under its row — hydration and display only |
-| not carried as authorization | the viewer's partitions — read on every request and rechecked at hydration (Part 4) |
+| not carried as authorization | the viewer's partitions — read on every request and rechecked at hydration ([integration details](#part-3--integration-and-reference)) |
 
 ```json
 { "v": 1, "anchor": { "seq": 5000 }, "cursor": ["2026-11-12T08:00", "i6"],
@@ -989,7 +779,7 @@ can see, and with the same item reachable through more than one of them.
            ["group", "D", ["2026-11-12T08:00", "i6"], ["2025-03-01T08:00", "i8"]]] }
 ```
 
-This uses the single-source shorthand defined in Part 1. Rolling group entries belong to this
+This uses the single-source shorthand defined in [The vector as an object](#the-vector-as-an-object). Rolling group entries belong to this
 one monotone logical scan. A shared mutable `last` is not a general cross-stage exclusion: a
 later stage may restart above it. Use fixed represented spans below for cross-stage episodes, or
 design explicit per-consumer state and validate that additional composition separately.
@@ -997,12 +787,12 @@ design explicit per-consumer state and validate that additional composition sepa
 The vector carries no plan parameter — no stage list, budget, horizon or merge mode — and no
 scope (the list's query and filters): the signature binds both (rule 2), so a token presented to
 another plan or another list is rejected. This example reads the viewer's partitions live on every
-request. An alternative may bind an access-scope version to force restarts on changes (Part 4),
+request. An alternative may bind an access-scope version to force restarts on changes ([integration details](#part-3--integration-and-reference)),
 but the token never grants access.
 
-### The page loop
+#### The page loop
 
-This is the Part 1 loop for one source, with the group test applied in memory. Group metadata
+This specializes the [expanded loop](#how-a-page-is-built) for one source, with the group test applied in memory. Group metadata
 uses the same item filters, anchor and visibility as the scan. Cache keys and invalidation must
 respect that scope; an unscoped or stale oldest-position lookup is not a correctness proof.
 
@@ -1033,7 +823,7 @@ check token bytes; hydrate the completed selection in batches and present the ro
 return page and continuation when hasMore, including after an empty page
 ```
 
-### How it evolves — a viewer of two partitions, three pages
+#### How it evolves — a viewer of two partitions, three pages
 
 Page size 2, batch size 4, candidate cap at least 4, horizon H = 180 days, no count horizon or
 eviction. Sequence 5000 is a visibility
@@ -1091,11 +881,11 @@ than two entries (for a moment in page 2, after i4: three). A refresh starts a n
 The final JSON shows the internal selection state. Page 3 consumes the entire short final batch,
 so its response has no continuation token; F's terminal entry need not be sent back to the client.
 
-### Groups enter big and are consumed
+#### Groups enter big and are consumed
 
 A group entry suppresses older members according to the declared episode and count rules. It is
 updated as the scan meets them and removed when suppression ends or no eligible member remains.
-Group A in the trace above:
+Group A in the [grouped trace](#how-it-evolves--a-viewer-of-two-partitions-three-pages):
 
 | Page | What the scan meets | A's entry `(last, oldest)` | A's older items still ahead |
 |---|---|---|---|
@@ -1110,12 +900,12 @@ The vector retains groups that may still suppress candidates ahead of the scan. 
 a candidate it may also retain the entry at its exact oldest position until the next comparison.
 The live set is no larger than the rows selected so far in this single-scan model, but can span
 many pages. A time horizon limits temporal reach, not density; a declared count horizon bounds
-the live set by R + 1 under the transition convention in Part 4. Capacity limits still need the
+the live set by R + 1 under the [count-horizon transition convention](#the-count-horizon). Capacity limits still need the
 exact-versus-approximate policy in rule 8.
 
-### Served whole — fixed spans for groups and episodes
+#### Served whole — fixed spans for groups and episodes
 
-The entries above follow the scan: `last` is renewed by every item it skips. When a group's row
+The rolling entries in the [grouped trace](#how-it-evolves--a-viewer-of-two-partitions-three-pages) follow the scan: `last` is renewed by every item it skips. When a group's row
 is served, the server can instead list the group's items once, at that moment, and count the
 whole group as served. Its entry is then fixed:
 
@@ -1138,7 +928,7 @@ dropped: when the scan passes Nov 3 (newest first) or Nov 9 (oldest first)
 - **One more kind of entry, not a replacement.** Item entries `["item", position]` stay wherever a
   stage serves single items; a span is used where a group is served whole. One exclusion list can
   hold both, beside the predicate exclusions — each kind with its own test and its own expiry,
-  all pruned as the scan passes them. Compact exclusions (Part 1) shrink each entry's bytes; a
+  all pruned as the scan passes them. [Compact exclusions](#optimization--compact-exclusions) shrink each entry's bytes; a
   span shrinks the number of entries. The two combine.
 - **One entry for every stage.** The stage that served the group skips its other items as its
   scan meets them; every later stage applies the same test — in memory, or pushed into its
@@ -1162,7 +952,7 @@ dropped: when the scan passes Nov 3 (newest first) or Nov 9 (oldest first)
   consumer stops suppressing that span and an earlier episode can become another row. Other
   remaining consumers may still require the span in the vector.
 
-### The horizon — the gap rule, and plain and grouped as one parameter
+#### The horizon — the gap rule, and plain and grouped as one parameter
 
 A time horizon is a **gap rule**: a group gets a new row where it was silent for H or longer. The
 entry's `last` is renewed by every item the scan skips, so a group that keeps receiving items
@@ -1182,7 +972,23 @@ index. With fixed scope and no count horizon or eviction, the head check below d
 canonical episode-head sequence for each time horizon. Request work caps or pushdown can still
 produce different page boundaries and different numbers of empty pages.
 
-### Group heads — the case where nothing needs carrying
+#### The count horizon
+
+A count horizon carries the chain's selected-row count `selectedTotal`, initially zero, and adds
+`born` to each affected entry. This optional scalar is separate from the per-source `served` map.
+After selecting a row, increment `selectedTotal` and set its new entry's `born = selectedTotal`.
+Before each subsequent candidate, remove entries with `selectedTotal - born >= R`, for a declared
+integer R >= 0.
+Skipped candidates do not increase this count and do not renew `born`. This convention retains
+at most R + 1 entries immediately after selection and at most R before the next candidate, when
+each row adds one entry. R = 0 allows another row at the next candidate.
+
+This is a recurrence policy for represented groups, not transparent compression of an unlimited
+seen set. Declare where it applies and how recurring rows consume finite budgets. Fixed spans or
+item exclusions required for exact cross-stage coverage must not expire by count unless that
+weaker suppression is explicitly part of the result definition.
+
+#### Group heads — the case where nothing needs carrying
 
 Rule 7 taken to its end: **an item is a row only if it is the newest item of its group that this
 viewer can see, as of the anchor, within H.** If a newer one exists, this item was already shown
@@ -1198,7 +1004,7 @@ NOT EXISTS (SELECT 1 FROM membership n
                AND n.time < p.time + $H)                -- a gap shorter than H
 ```
 
-The same trace with the head check: i3 — A has a newer visible item (i1): skip. i4 — no newer
+The same [grouped trace](#how-it-evolves--a-viewer-of-two-partitions-three-pages) with the head check: i3 — A has a newer visible item (i1): skip. i4 — no newer
 item: row C; its second membership row is the same item at the same position and is folded by the
 scan itself. i5 — B has a newer visible item, i2 (i0 is newer still but after the anchor, so it
 does not count): skip. i6 — row D. i7 — A has newer: skip. i8 — D's newer item (i6) is more than
@@ -1221,7 +1027,17 @@ are the same example pages, and the vector is only `{ v, anchor, cursor }` in si
 - **Index:** `(group_key, time DESC, item_id DESC) INCLUDE (partition_id, seq)` on the membership
   rows — the same index that opens a group.
 
-### Things to know
+#### The head check, safely
+
+The head check reads visibility live and remembers nothing, so it is safe only while what a reader
+can see does not grow during the chain. If a partition is granted, or an item un-hidden,
+mid-chain, the newer item it finds can lie above the cursor, never scanned — and a group is lost.
+Carried exclusions avoid this particular unseen-head suppression, but changed visibility can
+still cause omissions, repeats and budget displacement. Binding an access-scope version can
+force a restart when scope changes; the server must still check current permissions on every
+request. Bind the full relevant access state, not just partitions if item-level visibility can change.
+
+#### Things to know
 
 - **Expanding a row never changes the vector.** A group's exclusion is decided when its row is
   **served**, not when someone opens it. Its items are hydrated on demand: the newest few and a
@@ -1231,8 +1047,7 @@ are the same example pages, and the vector is only `{ v, anchor, cursor }` in si
   items now carry the shown one's key and are skipped until a refresh. A live refresh of the shown
   row may expose the changed members. Merges and splits change the result definition; do not apply
   the fixed-data exactness guarantee to them, especially when repeats consume finite budgets.
-- **Compact exclusions need a numeric group number** (Part 1, "Optimization — compact
-  exclusions"). String keys remain literal. Numeric IDs may delta-compress well when they correlate
+- **Compact exclusions need a numeric group number** ([Optimization — compact exclusions](#optimization--compact-exclusions)). String keys remain literal. Numeric IDs may delta-compress well when they correlate
   with expiry order, but filters, visibility and backfills can break that correlation; measure it.
 - **A shared loop for compatible lists.** Plain lists, grouped lists, stable-order search results,
   priority sections and a group's own items can share continuation machinery when their adapters
@@ -1246,16 +1061,12 @@ are the same example pages, and the vector is only `{ v, anchor, cursor }` in si
   - database and search adapters can share a result shape, while ordering, visibility and work
     limits must be established separately for each engine.
 - **Operations:** token size, keys and expiry, or stored-state capacity, coordination and recovery;
-  metrics and support tools for either version — Part 4.
-
----
-
-## Part 3 — Uses
+  metrics and support tools for either version — [integration and reference](#part-3--integration-and-reference).
 
 ### Deterministic ordered stages
 
 One list served from sources in a fixed priority, each source exhausted or its budget spent
-before the next. Part 1's trace is this shape. Under the exact-mode assumptions, retained
+before the next. The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) has this shape. Under the exact-mode assumptions, retained
 exclusions prevent cross-stage duplicates. What it asks of the mechanism:
 
 - **Stages:** one page filled across sources in order; proven exhaustion or a spent output budget
@@ -1265,19 +1076,19 @@ exclusions prevent cross-stage duplicates. What it asks of the mechanism:
 - **Reservations:** optionally assign a prepared set to a later stage before earlier scans can
   take it; the plan distinguishes pending ownership from already selected coverage.
 - **Predicate exclusion:** use either an intentional whole-category quota or a proven consumed
-  prefix, as defined in Part 1.
+  prefix, as defined in [The result a plan defines](#the-result-a-plan-defines).
 - **Both engines, one shape:** adapters can return `(sort key, id)` in a compatible order,
   with grouping metadata resolved separately where needed, provided they establish the required
   visibility and source semantics.
 - **Presentation apart:** items of one group spread apart on each page, optionally in a seeded
   order per day; cursors and exclusions follow the canonical order.
 - **Strict validation and a bound continuation protocol**, using a protected client-held token
-  or a server-held handle/revision; test both validation and page walking (Part 4, "Testing").
+  or a server-held handle/revision; test both validation and page walking ([Testing](#testing)).
 
 ### The shapes it fits
 
 - **Grouped lists** — one row represents items related by an application-defined grouping rule
-  (Part 2).
+  ([grouped results](#grouped-results--one-row-per-group)).
 - **Lists with priority sections** — a preferred category first, then the broader eligible set:
   ordered stages.
 - **Ordered results merged from several sources** — items from independent sources, merged by
@@ -1305,23 +1116,182 @@ exclusions prevent cross-stage duplicates. What it asks of the mechanism:
 
   Two things to settle: a continuation that expired while the app slept is treated as a
   pull-to-refresh; and the order of the sections is a product decision, made from the same
-  per-stage data as the rest (Part 1, "Choosing the values").
+  per-stage data as the rest ([Choosing the values](#choosing-the-values--from-the-data)).
 
-### Possible implementation
+### Examples
 
-The vector schema and transition loop could form a reusable core, with separate client-token
-and server-store adapters. Applications supply source adapters exposing ordering, consumed
-progress, visibility and reliable exhaustion, plus group metadata or preparation state.
-The storage/protocol adapter supplies validation, binding, publication, expiry and retry behavior.
-This document specifies the design; building such a library requires implementation and
-validation of those contracts.
+**1. A plain list (H = 0).** The [grouped fixture](#how-it-evolves--a-viewer-of-two-partitions-three-pages) with H = 0: every item is its own row — i1, i2 · i3,
+i4 · i5, i6 · i7, i8 · i9. i4 still shows once: the scan folds its two copies. Every entry ends
+at the next candidate, so `excl` carries at most one entry between pages.
+
+**2. A priority category first, then the remaining groups.** Use the [grouped fixture](#how-it-evolves--a-viewer-of-two-partitions-three-pages) with whole groups
+(H = infinity) and A as the only group in the priority category. The first stage has budget 1 and
+represents A whole. A later request to the remaining stage asks for 3 rows with candidate cap 3;
+priority groups are excluded by a stable group-level predicate in the source query. It serves
+B and C and skips B's i5; at that cursor C's oldest position is already passed, so C's entry is
+gone. B's entry remains at i5 until
+the next candidate. This is a short page with continuation. The example uses canonical maps and
+tagged entries:
+```json
+{ "v": 1, "anchor": { "seq": 5000 }, "stage": "remaining",
+  "cursor": { "priority": ["2026-11-14T10:00", "i1"], "remaining": ["2026-11-13T12:00", "i5"] },
+  "done": ["priority"],
+  "predicates": { "excludeCategory": "priority" },
+  "excl": { "remaining": [["group", "B", ["2026-11-13T12:00", "i5"], ["2026-11-13T12:00", "i5"]]] } }
+```
+
+**3. Search across a database and a search engine.** Search for a given term, with an explicit
+preference for items labelled `preferred`. Both stages require the same text match and access;
+the label is a priority criterion, not a mandatory list filter. Stage 1 serves matching items with
+that label using the database adapter; stage 2 serves remaining matches using the search adapter.
+Both return the same immutable ordering and establish the required text-match/visibility semantics. Here the
+earlier stage ended at i377; its surviving item exclusions use canonical tagged entries:
+```json
+{ "v": 1, "anchor": { "seq": 5000 }, "stage": "text",
+  "cursor": { "structured": [1763030000000, "i377"], "text": [1763050000000, "i412"] },
+  "done": ["structured"],
+  "excl": { "structured": [["item", [1763040000000, "i398"]], ["item", [1763030000000, "i377"]]] } }
+```
+
+**4. An ordered result merged from three sources.** Sources S1, S2 and S3 supply items ordered
+by time (not staged — the plan says so; the vector does not). One cursor per source; each page
+takes the newest of the three heads until it is full, resolving equal positions by a stable source
+order. IDs in this fixture are disjoint across sources; overlapping identities require retained
+exclusions too. Each source supplies its own visibility watermark, so the anchor holds three.
+They define a per-source cut, not one atomic snapshot across systems:
+```json
+{ "v": 1, "anchor": { "S1": 5000, "S2": 812, "S3": 77 },
+  "cursor": { "S1": ["2026-11-12T08:00", "i6"], "S2": ["2026-11-12T09:10", "i88"],
+              "S3": ["2026-11-11T16:00", "i12"] } }
+```
+
+**5. A capped vector.** A viewer scrolls through interleaved groups with H = infinity and required
+state reaches its limit. Exact mode returns an explicit capacity error before delivering the
+tentative page; it does not drop entries and claim completion. An explicitly approximate plan may
+evict entries using its deterministic policy, allowing group repeats and possible loss of distinct
+results under finite budgets. See the counterexample in "The cap".
+
+**6. A tampered or stale token.** A token whose signature fails, whose version is unknown, or
+whose decoded fields do not validate is rejected with 400; the client starts a fresh chain (page
+1, new anchor). Nothing is guessed.
 
 ---
 
-## Part 4 — Implementing it
+## Part 3 — Integration and reference
+
+These sections explain how to operate the core and whichever capabilities you selected.
+They include required contracts, not just optional tuning: authorization, source ordering,
+reliable exhaustion and honest failure handling still apply to the smallest implementation.
+Choose one state-placement protocol; read the engine and optimization details relevant to it.
 
 An implementation must settle these contracts and verify them against its own source adapters.
 The choices below distinguish exact traversal from explicit limits or weaker policies.
+
+### The implementation layers
+
+An implementation combines that core with a storage and request protocol:
+
+| Layer | What it is | What it decides |
+|---|---|---|
+| **Structure** | the vector: anchor, cursors, exclusions with expiry positions, prepared lists, counters | what must be remembered, and its bounds |
+| **Algorithm** | the page loop and its transition rules: staged or merged sources, reserve, skip, prune, emit | how selection advances correctly and what a page costs |
+| **Storage and protocol** | client-held authenticated state, or a server-held vector addressed by a handle and revision | how state is recovered, requests are bound, and retries are handled |
+
+The structure and algorithm are the core mechanism; placement changes its operational contract.
+The plan can be **suspended after a page and resumed by a compatible server with access to the
+required state and sources**. A client-held token supplies the state with the request. A
+server-held handle requires a successful lookup in the appropriate state store.
+
+### Where the vector lives
+
+**The vector and its rules are the mechanism; storage placement is an architectural choice.**
+Given the same vector, plan, request and data, the selection rules do not depend on whether the
+vector came from a token or a state store. The request and failure contracts do differ:
+
+| Choice | What the client carries | What the server retains between requests | Main tradeoff |
+|---|---|---|---|
+| **Client-held** | an authenticated token containing the vector | no application record of that scroll is required | token bytes and repeated encoding/decoding in exchange for independent request handling |
+| **Server-held** | an opaque handle identifying the chain and requested revision | the vector, its binding and lifecycle metadata, plus any retry information required by the protocol | small client continuations in exchange for session storage and coordination |
+
+Here **stateless** means no application session store is required for continuation. It does not
+mean the vector, database, configuration or signing keys cease to exist. An optional engine
+snapshot can also retain state independently of where the application keeps the vector.
+
+Server-held vectors may live in process-local RAM or a shared store. A handle identifies stored
+state; a signature can protect a handle but cannot replace missing state or current authorization.
+The [server-held protocol](#server-held-continuation) describes revision checks, replay,
+concurrency and expiry. Neither version guarantees exactly-once receipt or display by the client.
+
+**Reading the examples.** The expanded and grouped page loops, token encodings and JSON traces use the
+client-held version unless stated otherwise. The traces show the same logical state a server
+could retain. Token-specific validation and serialization wrap the shared selection rules;
+server-held implementations use lookup and coordinated publication instead.
+
+### Rules
+
+1. **The vector and its rules define continuation.** Choose where the vector lives. The client
+   returns its opaque token or handle/revision unchanged and follows continuation even after an
+   empty page. Only the client-held version avoids an application session store.
+2. **Bind and protect continuation state.** Bind the **tenant, user and list identity** — including
+   plan version, query and filters — to the vector. Authenticate client-held payloads and verify
+   that binding before decompression. A signature stops tampering but does not encrypt the
+   contents; use authenticated encryption when confidentiality is needed. For server-held state,
+   check the stored binding before using the vector or replaying a result; an opaque or signed
+   handle is not authorization. Recheck actual access on every request and at hydration ([integration details](#part-3--integration-and-reference)).
+   A valid same-scope replay is handled by the chosen protocol, not rejected merely for being a replay.
+3. **Integrity or a successful lookup is not enough.** Validate the vector's schema/plan versions,
+   known fields, required stage state, types, ranges, positions and entry kinds before querying.
+   Item identities and rolling-group keys are unique in their appropriate scopes; fixed spans
+   are unique by group and bounds, not group alone.
+4. **The server owns the limits** — the sources, their order, each stage's grouping, window,
+   budget and horizon ("What each stage declares"), and the page-size cap. The client may ask for
+   a page size, nothing more.
+5. **Every resource has an explicit limit and overflow policy.** Prune safely and bound prepared
+   buffers, client-held token bytes, or server-held per-chain and aggregate memory plus retry data.
+   Stop exact traversal if required state cannot fit. A small handle does not bound the state
+   behind it, and a fixed state limit does not guarantee every possible chain can finish.
+6. **Exclude by the widest key that is correct**: a predicate before a group key, a group key
+   before an item id. One entry should cover as much as possible without hiding unrepresented
+   results. A predicate must reproduce the right coverage; its storage and lookup cost are separate.
+7. **Carry only what cannot be recomputed cheaply.** Whatever can be decided from the data and the
+   anchor alone does not belong in the vector (see [Group heads](#group-heads--the-case-where-nothing-needs-carrying)).
+8. **Retain required state for exact traversal.** Dropping an exclusion early may create repeats;
+   with finite budgets those repeats may displace distinct results. An approximate mode must state
+   that tradeoff. Expiry justified by the plan's declared horizon is a result rule, while expiry
+   justified by all remaining scans passing the entry is safe pruning.
+9. **Deterministic.** The same vector, plan, request and fixed data give the same page. State
+   transitions happen per candidate or selected row, not only when state is serialized or committed.
+10. **Separate selection, hydration and presentation.** Sources return IDs and stable sort positions,
+    whichever engine answers — a database or a search engine. Group membership may be supplied
+    by a separate bounded metadata lookup during selection; it need not live in the scan index.
+    Prefer bulk hydration after page selection finishes: collect the complete page's IDs of
+    interest and batch the required payload reads per relation or backing service, splitting into
+    bounded chunks where necessary. This gives the payload queries a predictable batch structure
+    and avoids per-candidate reads. One hydration phase may use several queries. This is the
+    recommended default illustrated by the loops, not a required hydration schedule.
+    Presentation reorders the bounded page for display and never touches cursors or exclusions.
+11. **Apply each exclusion where it is cheapest** — in memory in the page loop, as a filter on an
+    ordered scan that stops at the page, or as a merge of sorted document lists in an inverted
+    index. Preserve semantics and required skip-state updates, then compare execution plans and
+    measured costs; a relational anti-join is an option, not a correctness violation.
+12. **The stages of one list share its scope.** The list's filters (views, tags, field matches,
+    access) apply per item, and alike in every stage; a stage's own criterion only decides which
+    items come first. So an item served by any stage is served for the whole list, and every
+    stage can honour every other stage's exclusions.
+
+### Positions and ties
+
+- **A position is a tuple** `(sort key, id)`, compared as a tuple for cursors, span membership and
+  oldest-position pruning. Only duration-based gap tests use the time component alone. Comparing
+  just the sort key for identity boundaries can drop an equal-key entry too early.
+- **Every source orders an item the same way.** An item reachable from two sources must have the
+  same position in both for the shared-entry representation here. Otherwise pruning can occur
+  before another source reaches the item, creating a repeat and possibly displacing other results.
+  Likewise, copies of one item in two partitions fold only when they share `(time, item id)`.
+- **Across engines, ties match only when you make them.** Compare ids as bytes (`COLLATE "C"` in
+  Postgres; Elasticsearch `keyword` already sorts by bytes), or use numeric ids; and use one
+  timestamp precision on both sides — Postgres keeps microseconds, Elasticsearch `date`
+  milliseconds (`date_nanos` keeps more).
 
 ### The token
 
@@ -1444,20 +1414,6 @@ committed, recover it through its replay contract rather than advancing again.
 Current hydration data may differ from the data used for selection, so exact fixed-data guarantees
 no longer apply. Revalidation at hydration protects access; it does not create a snapshot.
 
-### Positions and ties
-
-- **A position is a tuple** `(sort key, id)`, compared as a tuple for cursors, span membership and
-  oldest-position pruning. Only duration-based gap tests use the time component alone. Comparing
-  just the sort key for identity boundaries can drop an equal-key entry too early.
-- **Every source orders an item the same way.** An item reachable from two sources must have the
-  same position in both for the shared-entry representation here. Otherwise pruning can occur
-  before another source reaches the item, creating a repeat and possibly displacing other results.
-  Likewise, copies of one item in two partitions fold only when they share `(time, item id)`.
-- **Across engines, ties match only when you make them.** Compare ids as bytes (`COLLATE "C"` in
-  Postgres; Elasticsearch `keyword` already sorts by bytes), or use numeric ids; and use one
-  timestamp precision on both sides — Postgres keeps microseconds, Elasticsearch `date`
-  milliseconds (`date_nanos` keeps more).
-
 ### The cap
 
 **Exact mode:** remove only state proved unnecessary by the plan's semantics or by every remaining
@@ -1483,22 +1439,6 @@ enforcement removes that particular dependence, but does not restore exactness. 
 furthest expiry is a heuristic; long groups may repeatedly re-enter. Avoid unbounded eviction
 history masquerading as bounded state. Measure the chosen policy and state its result semantics.
 
-### The count horizon
-
-A count horizon carries the chain's selected-row count `selectedTotal`, initially zero, and adds
-`born` to each affected entry. This optional scalar is separate from the per-source `served` map.
-After selecting a row, increment `selectedTotal` and set its new entry's `born = selectedTotal`.
-Before each subsequent candidate, remove entries with `selectedTotal - born >= R`, for a declared
-integer R >= 0.
-Skipped candidates do not increase this count and do not renew `born`. This convention retains
-at most R + 1 entries immediately after selection and at most R before the next candidate, when
-each row adds one entry. R = 0 allows another row at the next candidate.
-
-This is a recurrence policy for represented groups, not transparent compression of an unlimited
-seen set. Declare where it applies and how recurring rows consume finite budgets. Fixed spans or
-item exclusions required for exact cross-stage coverage must not expire by count unless that
-weaker suppression is explicitly part of the result definition.
-
 ### Declared exceptions
 
 The fixed-data guarantee does not cover the following changes or visibility gaps:
@@ -1515,15 +1455,253 @@ The fixed-data guarantee does not cover the following changes or visibility gaps
   sequence and Read Committed behavior illustrate why allocated order is not visibility order.
   [PostgreSQL transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html).
 
-### The head check, safely
+### Choosing the values — from the data
 
-The head check reads visibility live and remembers nothing, so it is safe only while what a reader
-can see does not grow during the chain. If a partition is granted, or an item un-hidden,
-mid-chain, the newer item it finds can lie above the cursor, never scanned — and a group is lost.
-Carried exclusions avoid this particular unseen-head suppression, but changed visibility can
-still cause omissions, repeats and budget displacement. Binding an access-scope version can
-force a restart when scope changes; the server must still check current permissions on every
-request. Bind the full relevant access state, not just partitions if item-level visibility can change.
+None of these values can be chosen on paper: each is a property of the data and of how people
+read it. Each stage needs the same few measurements:
+
+| Measurement | What it sets |
+|---|---|
+| the size of the stage's set per reader — median, p99, largest | the budget; whether later stages can exclude the whole set by predicate |
+| the arrival rate, and the spans and gaps of the stage's groups | a time horizon: just above the gap that live groups rarely cross |
+| how deep chains go — pages per chain, from the request logs | the cap, and a count horizon: above the depth most chains reach |
+| the skip ratio — candidates scanned per row served | what a page really costs |
+| the live entries over the scroll — average and peak (Little's law: average = arrival rate × entry life) | the state cap, token bytes or server memory budget |
+
+### Cost
+
+For a single scan with constant-time exclusion lookup, the selection loop does O(P + S) candidate
+checks for P selected rows and S candidates skipped in the application. The scan cap bounds that
+candidate count. It does **not** bound database rows rejected before `LIMIT`, posting-list work,
+query startup, metadata lookups or preparation. A SQL query returning one row can inspect a million
+rejected rows before finding it.
+
+For M merged sources, a heap typically adds O(log M) work per consumed head and source startup
+costs. Client-held token encoding and decoding depend on the live state size. Server-held state
+has lookup, coordination and any persistence or copying costs; schema validation still matters.
+Pruning every entry on every candidate adds cost; an implementation needs suitable ordered expiry
+structures or must account for those scans explicitly.
+
+Hydrating P selected item IDs bounds the item count, not necessarily payload bytes. Expanding P
+groups can involve arbitrarily many members. Full-group or episode discovery, counts and boundary
+lookups need their own indexes, summaries, lazy expansion or work limits. Prepared buffers cost
+both their initial query and any refills, plus retained memory or transmitted bytes between requests.
+
+Use separate budgets and metrics for application candidates, source reads/deadlines, metadata,
+hydration, state memory and transmitted bytes. A deadline must not turn an incomplete query into
+false exhaustion.
+These are algorithmic costs and implementation requirements, not measured engine benchmarks.
+
+#### Computation, memory and communication
+
+Placement changes the tradeoff between these three resources. Remembering explicit IDs can make
+membership checks cheap while enlarging state. Recomputing coverage reduces retained state but
+adds lookup work. Group spans or predicates can represent the same set compactly, with their
+own membership costs. Those choices apply to either storage placement.
+
+A client-held vector travels out with a response and back with the next request, so its size is
+a recurring network cost. Server-held state reduces that client traffic and may retain useful
+sets or heaps across requests. Process-local RAM requires requests to reach its owner; a shared
+store can move vector reads and writes onto the internal network. Keeping state server-side
+does not automatically eliminate serialization or communication costs.
+
+Measure both bytes and round trips, alongside CPU, memory per active chain and total concurrent
+state. Include replay records, buffers, object overhead and any replicas. Bulk hydration can
+reduce payload-query round trips independently of where the vector lives. The final-stage
+sweeper reduces retained coverage in either version: it saves token space or server memory.
+
+### Where exclusions are applied
+
+**Preserve an efficient ordered access path where possible.** In the access paths below, the
+positive query supplies candidates and exclusions remove matches. An ordered scan can stop after
+enough surviving rows, although it may inspect many rejected rows first. Sorting, exact counting,
+joins and aggregations can add work beyond the page; inspect the actual execution plan rather than
+inferring a fixed cost from `LIMIT` alone.
+
+How the check is made depends on the kind of index:
+
+- **An ordered index — a B-tree, in SQL.** It finds what **is** there; it cannot seek to
+  "everything except these". The exclusion is a filter on each row the range scan reads. The scan
+  can supply the result order when the index supports the `ORDER BY`; a limit can then stop it
+  after enough surviving rows. Index direction, equality prefixes and planner choices matter.
+- **An inverted index — a search engine.** For every term it keeps a posting list: the sorted ids
+  of the documents that have it. A query walks these lists together — AND intersects them, OR
+  merges them, NOT removes one list's documents from another — each a **merge of sorted document
+  lists** that skips ahead rather than reading every entry. Engines cache frequently used filters
+  as bitsets, an optimisation on top of the merge. The lists are in document order, not time
+  order. Matching index sorting can enable early termination per segment when exact hit counts
+  and aggregations do not require further collection; it is not a universal bound on index work.
+
+Hence three places, each right for one kind of exclusion:
+
+| Where | Right for | Cost |
+|---|---|---|
+| **in memory, in the page loop** | the vector's own pruned entries, especially rolling state that must see skips | a set lookup in the application; rejected candidates still cost source reads and transfer |
+| **a filter on an ordered scan** — `id <> ALL($1)` with the pruned list | a short list, or a category cheaply available on the row | source work includes rejected rows; inspect `EXPLAIN (ANALYZE, BUFFERS)` on representative data |
+| **an inverted-index filter** — `must_not` | categories or identities indexed as document terms | posting-list and collection work depends on distribution, segments and the query; matching index sorting can help |
+
+Two query forms deserve particular care:
+- **A relational anti-join**, often expressed as `NOT EXISTS`, may add indexed probes per candidate
+  or a hash build before scanning. It can also be a good plan. Compare its cost with denormalizing
+  a category onto the row/document, including update consistency and write costs. The [group-head
+  alternative](#group-heads--the-case-where-nothing-needs-carrying) deliberately uses a relational lookup.
+- **`NOT IN (subquery)`** has NULL-sensitive semantics. For intended anti-existence behavior,
+  `NOT EXISTS` usually expresses the requirement more directly; the two are not interchangeable
+  without accounting for NULLs. Planner support also varies by version and expression.
+
+PostgreSQL documents hash lookup for long constant `IN` lists in version 14 and `NOT IN` lists
+in version 15. This does not establish the same optimization for every parameterized array or
+generic plan. The version 19 development release notes describe conversion of eligible `NOT IN`
+subqueries to anti-joins; as checked on 19 November 2026, that version was still labelled a
+development release. Treat it as version-specific, not a portable guarantee.
+[PostgreSQL 14](https://www.postgresql.org/docs/14/release-14.html),
+[PostgreSQL 15](https://www.postgresql.org/docs/15/release-15.html),
+[PostgreSQL 19](https://www.postgresql.org/docs/19/release-19.html),
+[subquery NULL semantics](https://www.postgresql.org/docs/18/functions-subquery.html).
+
+#### Example — one exclusion, two engines
+
+Page 5 of the [four-stage trace](#how-it-evolves--four-stages-over-five-pages): S4 continues below its cursor 92·y. The page needs items at or before
+the anchor (sequence 9000), below the cursor, not d, e or w (the ids still ahead of the cursor),
+not labelled red or blue (S2's category, a predicate) — the newest 4. The table holds every item
+of the trace.
+
+**SQL (Postgres).** The labels are stored on the row, as `labels text[] NOT NULL DEFAULT '{}'`;
+the index is `(sort_key DESC, id DESC)`.
+
+```sql
+SELECT id, sort_key
+FROM items
+WHERE seq <= 9000                              -- the anchor
+  AND (sort_key, id) < (92, 'y')               -- the cursor
+  AND id <> ALL ('{d,e,w}')                    -- the ids still ahead of the cursor
+  AND NOT (labels && '{red,blue}')             -- the category, read from the row
+ORDER BY sort_key DESC, id DESC
+LIMIT 4;
+```
+
+If the planner chooses the intended ordered index scan, the illustrative walk is 92·o, 91·p
+(labelled), 90·d (excluded), 89·q (labelled), 88·e, 87·w (excluded), 86·z (served), 85·r (labelled),
+84·z2, 82·z3, 80·z4 (served): 11 fixture entries for four results. This is a hand trace, not an
+execution-plan measurement. NULL-sensitive conditions can silently exclude rows, so the example
+uses non-NULL IDs/labels and validation rejects NULL identities in the exclusion list.
+
+An alternative keeps the labels in a relation table:
+
+```sql
+  AND NOT EXISTS (SELECT 1 FROM item_labels l
+                   WHERE l.item_id = items.id AND l.label IN ('red', 'blue'))
+```
+
+An indexed-probe plan adds a lookup in `item_labels` per candidate. A hash anti-join has a different
+startup cost and may choose a different access path. Measure both against the data distribution;
+keeping labels on the row trades those relation lookups for denormalized storage and updates.
+
+**Elasticsearch / OpenSearch.** The same items, the labels as a keyword field, the index sorted
+the way the list is read:
+
+```http
+PUT items
+{
+  "settings": { "index": { "sort.field": ["sort_key", "id"], "sort.order": ["desc", "desc"] } },
+  "mappings": { "properties": {
+    "id":  { "type": "keyword" }, "sort_key": { "type": "long" },
+    "seq": { "type": "long" },    "labels":   { "type": "keyword" } } }
+}
+
+POST items/_search
+{
+  "size": 4,
+  "track_total_hits": false,
+  "query": { "bool": {
+    "filter":   [ { "range": { "seq": { "lte": 9000 } } } ],
+    "must_not": [ { "terms": { "id":     ["d", "e", "w"] } },
+                  { "terms": { "labels": ["red", "blue"] } } ] } },
+  "sort": [ { "sort_key": "desc" }, { "id": "desc" } ],
+  "search_after": [92, "y"]
+}
+```
+
+The query expresses the same fixture result with document fields and `search_after`. Matching
+index sorting and `track_total_hits: false` allow eligible collection to terminate after enough
+matches per segment; they do not imply the same 11 internal reads as the SQL hand trace.
+Index sorting is configured at index creation and has an indexing-throughput cost. Aggregations
+may still collect every match. Check the corresponding engine/version and profile the query.
+[Elasticsearch index sorting](https://www.elastic.co/docs/reference/elasticsearch/index-settings/sorting),
+[OpenSearch index sorting](https://docs.opensearch.org/latest/im-plugin/index-sorting/).
+Costs to watch:
+- counting the hits — `track_total_hits` counts up to 10,000 by default, which keeps the walk
+  going past the page;
+- `from` / `size` instead of `search_after` — every page re-reads all the pages before it;
+- sorting on fields without a matching index sort — other competitive-document optimizations may
+  help, but do not assume the same per-segment early termination.
+
+**A staged list makes this choice per stage** (see [Deterministic ordered stages](#deterministic-ordered-stages)). Take a broad last stage that excludes
+the items earlier stages served and everything carrying a reader's chosen labels. On a database
+that can use an ID filter and an indexed anti-join; on a search engine it can use `must_not` over
+IDs and label terms. Either may be appropriate. Choose per stage from measured plans, indexing
+costs, consistency requirements and available ordering, rather than assuming a broad stage
+always belongs on a search engine.
+
+### Optimization — compact exclusions
+
+Exclusion entries can accumulate with the scroll; counters and encoded positions also vary in
+size. For a homogeneous numeric entry list with one scan direction, entries can be stored like
+delta-encoded posting lists: **sorted,
+with the first entry absolute and every later entry as its difference from the previous one**,
+each difference written in as few bytes as it needs (a variable-length integer).
+
+**Why the vector suits it.** The entries are numbers — a position `(time, id)` — kept sorted by
+the position at which they expire, in the scan's own direction (newest first). Sorted means the
+differences are small; newest first means the time differences are never negative. The id
+differences are positive only when ids follow the same order; otherwise they are written zig-zag
+(a sign bit), which variable-length integers allow.
+
+```
+absolute:  (1763100000, 1042) (1763096400, 1040) (1763096400, 1039) (1763010000, 1012)
+encoded:   (1763100000, 1042) (3600, 2)          (0, 1)             (86400, 27)
+bytes:      5 + 2              2 + 1              1 + 1              3 + 1
+```
+
+**The operations stay simple:**
+- **Pruning removes the head.** The scan passes the newest expiries first, so an expired entry is
+  at the front once every applicable consumer has passed the same expiry frontier: the new head
+  is the old head minus the first difference, and that difference is dropped. Approximate
+  furthest-expiry eviction can remove the tail; exact mode does not evict necessary entries.
+- **Inserting in the middle** (a newly served entry that expires between two others) needs no
+  special case in the illustrated client-held encoding: the server decodes the vector for the
+  request, inserts into the decoded list and encodes it again. The differences are only the wire
+  format. A server-held implementation may instead retain a structure suited to in-memory updates.
+- **Validation still matters.** Check nonnegative time deltas, valid tie-breaker deltas when
+  times tie, integer ranges and overflow, decoded positions and entry-kind rules. Distinct episode
+  spans can share a group key; their bounds or episode identities distinguish them.
+
+**When it pays.** Sorted times often give smaller deltas, but byte savings depend on the gaps and
+encoding. The ID column benefits when numeric IDs correlate with that order; insertion order,
+event time and visible group bounds need not coincide. String keys can remain literal while
+numeric position components use delta encoding.
+
+**Keep exact boundaries lossless.** Coarsening timestamps can change membership, episode gaps or
+pruning. Early expiry may introduce repeats that consume finite budgets; widening a span may hide
+unrepresented items. Delta encoding can preserve the original values exactly. Use a coarser key
+only if it is the plan's canonical ordering/episode precision from the outset, with a stable
+tie-breaker and matching source semantics.
+
+For vectors measured in tens or hundreds of entries, variable-length integers may be sufficient.
+Measure actual encoded token sizes before adding block packing or other format complexity; this
+document does not establish a typical or maximum entry count for every workload.
+
+This shrinks each entry. The entries need not all be of one kind: where a stage serves a group
+whole, one span stands for all of the group's items, and the list holds fewer entries ([fixed spans for groups and episodes](#served-whole--fixed-spans-for-groups-and-episodes)).
+
+### Possible implementation
+
+The vector schema and transition loop could form a reusable core, with separate client-token
+and server-store adapters. Applications supply source adapters exposing ordering, consumed
+progress, visibility and reliable exhaustion, plus group metadata or preparation state.
+The storage/protocol adapter supplies validation, binding, publication, expiry and retry behavior.
+This document specifies the design; building such a library requires implementation and
+validation of those contracts.
 
 ### Testing
 
@@ -1570,73 +1748,19 @@ request. Bind the full relevant access state, not just partitions if item-level 
   the same plan, request, data and visibility; replaying a stored selection still requires current
   access checks and does not freeze hydrated payloads.
 
-### When not to use it
+### Relationship to existing techniques
 
-- **Results ordered by relevance.** A search engine's scores use statistics over the whole corpus,
-  which change as documents arrive, so the order moves even below the anchor. Use the engine's
-  point-in-time snapshot there.
-- **Sort keys that change often** — a "last activity" order where every change moves the item.
-  The declared exception becomes the common case.
-- **Totals and random access** ("page 37 of 120"): the pattern pages forward only.
-- **Small lists** that fit in one request.
-- **One ordered source, with no grouping and no composition:** plain keyset pagination is the
-  same thing with less machinery.
+**Where it stands among known techniques.** Related techniques include keyset pagination,
+[`search_after`](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/paginate-search-results),
+[Cosmos DB continuation tokens](https://learn.microsoft.com/cosmos-db/query/pagination),
+[watermark-based deduplication](https://spark.apache.org/docs/latest/streaming/apis-on-dataframes-and-datasets.html#streaming-deduplication),
+[per-key session windows](https://beam.apache.org/documentation/programming-guide/#session-windows),
+and [opaque, request-bound page tokens](https://google.aip.dev/158). These are comparisons for
+resuming execution, retiring state and defining episodes; their guarantees differ. A search PIT
+retains engine-side snapshot state, and streaming watermarks rely on lateness assumptions rather
+than proof that every remaining scan has passed an entry. The gap boundary here is explicitly
+`gap >= H`, not an assertion about every session-window implementation.
 
----
-
-## Examples
-
-**1. A plain list (H = 0).** The Part 2 data with H = 0: every item is its own row — i1, i2 · i3,
-i4 · i5, i6 · i7, i8 · i9. i4 still shows once: the scan folds its two copies. Every entry ends
-at the next candidate, so `excl` carries at most one entry between pages.
-
-**2. A priority category first, then the remaining groups.** Use Part 2's fixture with whole groups
-(H = infinity) and A as the only group in the priority category. The first stage has budget 1 and
-represents A whole. A later request to the remaining stage asks for 3 rows with candidate cap 3;
-priority groups are excluded by a stable group-level predicate in the source query. It serves
-B and C and skips B's i5; at that cursor C's oldest position is already passed, so C's entry is
-gone. B's entry remains at i5 until
-the next candidate. This is a short page with continuation. The example uses canonical maps and
-tagged entries:
-```json
-{ "v": 1, "anchor": { "seq": 5000 }, "stage": "remaining",
-  "cursor": { "priority": ["2026-11-14T10:00", "i1"], "remaining": ["2026-11-13T12:00", "i5"] },
-  "done": ["priority"],
-  "predicates": { "excludeCategory": "priority" },
-  "excl": { "remaining": [["group", "B", ["2026-11-13T12:00", "i5"], ["2026-11-13T12:00", "i5"]]] } }
-```
-
-**3. Search across a database and a search engine.** Search for a given term, with an explicit
-preference for items labelled `preferred`. Both stages require the same text match and access;
-the label is a priority criterion, not a mandatory list filter. Stage 1 serves matching items with
-that label using the database adapter; stage 2 serves remaining matches using the search adapter.
-Both return the same immutable ordering and establish the required text-match/visibility semantics. Here the
-earlier stage ended at i377; its surviving item exclusions use canonical tagged entries:
-```json
-{ "v": 1, "anchor": { "seq": 5000 }, "stage": "text",
-  "cursor": { "structured": [1763030000000, "i377"], "text": [1763050000000, "i412"] },
-  "done": ["structured"],
-  "excl": { "structured": [["item", [1763040000000, "i398"]], ["item", [1763030000000, "i377"]]] } }
-```
-
-**4. An ordered result merged from three sources.** Sources S1, S2 and S3 supply items ordered
-by time (not staged — the plan says so; the vector does not). One cursor per source; each page
-takes the newest of the three heads until it is full, resolving equal positions by a stable source
-order. IDs in this fixture are disjoint across sources; overlapping identities require retained
-exclusions too. Each source supplies its own visibility watermark, so the anchor holds three.
-They define a per-source cut, not one atomic snapshot across systems:
-```json
-{ "v": 1, "anchor": { "S1": 5000, "S2": 812, "S3": 77 },
-  "cursor": { "S1": ["2026-11-12T08:00", "i6"], "S2": ["2026-11-12T09:10", "i88"],
-              "S3": ["2026-11-11T16:00", "i12"] } }
-```
-
-**5. A capped vector.** A viewer scrolls through interleaved groups with H = infinity and required
-state reaches its limit. Exact mode returns an explicit capacity error before delivering the
-tentative page; it does not drop entries and claim completion. An explicitly approximate plan may
-evict entries using its deterministic policy, allowing group repeats and possible loss of distinct
-results under finite budgets. See the counterexample in "The cap".
-
-**6. A tampered or stale token.** A token whose signature fails, whose version is unknown, or
-whose decoded fields do not validate is rejected with 400; the client starts a fresh chain (page
-1, new anchor). Nothing is guessed.
+This pattern describes their composition into staged or merged sources with overlap tracking,
+predicate exclusions, prepared sources and explicit continuation rules. Page size bounds output
+rows; candidate work, retained state, source count and group hydration need their own bounds.
