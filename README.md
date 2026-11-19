@@ -53,6 +53,8 @@ A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern 
 
 Build it with `python skills/build_skill.py`. [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging; generated archives stay local.
 
+An [executable reference](./reference/README.md) makes the fixed-data core and explicit-ID reservations inspectable. It includes an independent unpaged oracle, retirement checks, synthetic fixtures and tests, with core mutation checks in CI. Run `python -m reference --example core --page-size 3` for the example above. Its [validation scope](./reference/VALIDATION.md) distinguishes checked semantics from database performance and the optional capabilities it does not implement.
+
 This publication provides a design, worked examples and implementation guidance, composing existing keyset or `search_after` cursors, stages or merged sources, and safely pruned overlap state. Query examples use PostgreSQL and Elasticsearch/OpenSearch. Implementations must validate correctness and performance against their own workloads.
 
 The original application demonstrated the staged-feed core. Server-held continuation, group episodes, merged sources, visibility watermarks and operational extensions are proposed generalizations. Reports of duplicates or skipped rows under the stated exact-traversal conditions are welcome, ideally with the smallest reproducing sequence of pages.

@@ -1,4 +1,4 @@
-name: Documentation and skill checks
+name: Documentation, skill and reference checks
 
 "on":
   push:
@@ -25,3 +25,23 @@ jobs:
         run: python -m unittest discover -s scripts/tests -v
       - name: Check public docs and reproducible skill package
         run: python scripts/check_docs.py
+
+  reference:
+    name: Core and reservations (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Run standalone reference tests
+        run: python -S -m unittest discover -s reference/tests -t . -v
+      - name: Check deliberately broken implementations
+        run: python -S -m reference.mutations

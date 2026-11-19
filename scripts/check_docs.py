@@ -30,9 +30,25 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "skills/kc-state-vector"
-MARKDOWN_FILES = ("README.md", "kc-state-vector.md", f"{PACKAGE}/SKILL.md",
-                  f"{PACKAGE}/references/kc-state-vector.md")
-PUBLIC_FILES = (*MARKDOWN_FILES, "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
+SKILL_MARKDOWN_FILES = ("README.md", "kc-state-vector.md", f"{PACKAGE}/SKILL.md",
+                        f"{PACKAGE}/references/kc-state-vector.md")
+SKILL_BUILD_FILES = (*SKILL_MARKDOWN_FILES, "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
+REFERENCE_MARKDOWN_FILES = ("reference/README.md", "reference/VALIDATION.md")
+# Deliberate publication boundary: never discover files recursively from the local
+# workspace or allow an arbitrary file merely because it sits under reference/.
+REFERENCE_SOURCE_FILES = tuple(f"reference/{name}" for name in (
+    "__init__.py", "__main__.py", "model.py", "oracle.py", "retirement.py",
+    "capacity_checks.py", "failure_checks.py", "closing.py", "long_scenarios.py",
+    "long_traversals.py", "tiny_plans.py", "tiny_checker.py", "exhaustive.py",
+    "mutations.py", "provenance.json", "tests/__init__.py", "tests/legacy_helpers.py",
+    "tests/test_boundaries.py", "tests/test_capacity_closure.py",
+    "tests/test_exhaustive_reporting.py", "tests/test_failure_closure.py",
+    "tests/test_long_traversals.py", "tests/test_reference.py",
+    "tests/test_retirement.py", "tests/test_tiny_checker.py", "tests/test_tiny_plans.py",
+    "tests/test_public_export.py", "tests/test_mutations.py",
+))
+MARKDOWN_FILES = (*SKILL_MARKDOWN_FILES, *REFERENCE_MARKDOWN_FILES)
+PUBLIC_FILES = (*SKILL_BUILD_FILES, *REFERENCE_MARKDOWN_FILES, *REFERENCE_SOURCE_FILES)
 PUBLIC_SUPPORT_FILES = (".gitignore", ".gitattributes", "requirements-checks.txt",
                         "scripts/check_docs.py", "scripts/tests/test_check_docs.py",
                         ".github/workflows/checks.yml")
@@ -149,7 +165,7 @@ def _build_checks(root):
     errors = []
     with tempfile.TemporaryDirectory(prefix="kc-state-vector-check-") as folder:
         work = Path(folder)
-        for relative in PUBLIC_FILES:
+        for relative in SKILL_BUILD_FILES:
             target = work / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(root / relative, target)
@@ -160,7 +176,7 @@ def _build_checks(root):
                 # ZIP timestamps have two-second precision. Use different years
                 # so an accidental dependency on source mtimes is observable.
                 timestamp = 946684800 + attempt * 31536000
-                for relative in PUBLIC_FILES:
+                for relative in SKILL_BUILD_FILES:
                     os.utime(work / relative, (timestamp, timestamp))
                 process = subprocess.run([sys.executable, "-X", "utf8", str(work / "skills/build_skill.py")],
                                          cwd=work, capture_output=True, text=True, timeout=60)

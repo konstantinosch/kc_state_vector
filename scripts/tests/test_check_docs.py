@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.check_docs import check_repository
+from scripts.check_docs import REFERENCE_SOURCE_FILES, check_repository
 
 
 BUILDER = Path(__file__).resolve().parents[2] / "skills" / "build_skill.py"
@@ -36,6 +36,10 @@ class CheckDocsTests(unittest.TestCase):
         self.write("skills/kc-state-vector/SKILL.md", SKILL)
         self.write("skills/kc-state-vector/references/kc-state-vector.md", PATTERN)
         self.write("skills/kc-state-vector/LICENSE", (self.root / "LICENSE").read_text())
+        self.write("reference/README.md", "# Executable reference\n\n[Scope](VALIDATION.md#scope)\n")
+        self.write("reference/VALIDATION.md", "# Validation\n\n## Scope\n\nFixed finite inputs.\n")
+        for relative in REFERENCE_SOURCE_FILES:
+            self.write(relative, "# Public reference fixture\n")
 
     def write(self, relative, content):
         path = self.root / relative
@@ -144,6 +148,33 @@ class CheckDocsTests(unittest.TestCase):
         self.write("README.md", "# Documentation\n\n[Notes](local_reference/notes.md)\n")
         self.assert_rejected(mentions="local_reference/notes.md")
 
+    def test_public_reference_links_resolve_without_local_research(self):
+        self.write("README.md", "# Documentation\n\n[Reference](reference/README.md)\n")
+        self.write("reference/README.md", "# Executable reference\n\n"
+                   "[Rules](../kc-state-vector.md#core)\n"
+                   "[Scope](VALIDATION.md#scope)\n[Oracle](oracle.py)\n"
+                   "[Tests](tests/test_reference.py)\n[Provenance](provenance.json)\n")
+        self.assertEqual([], check_repository(self.root, build=False))
+
+    def test_missing_public_reference_inputs_are_rejected(self):
+        for relative in ("reference/VALIDATION.md", "reference/oracle.py",
+                         "reference/tests/test_reference.py"):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_bytes()
+                path.unlink()
+                self.assert_rejected(mentions=relative)
+                path.write_bytes(original)
+
+    def test_reference_cannot_link_generated_or_private_files(self):
+        for relative, target in (("reference/results/trace.json", "results/trace.json"),
+                                 ("reference/scratch.py", "scratch.py"),
+                                 ("local_reference/model.py", "../local_reference/model.py")):
+            with self.subTest(target=target):
+                self.write(relative, "Unpublished fixture\n")
+                self.write("reference/README.md", f"# Reference\n\n[Extra]({target})\n")
+                self.assert_rejected(mentions="non-public")
+
     def test_build_uses_only_public_inputs_and_leaves_sources_unchanged(self):
         self.write("unpublished-notes.txt", "This fixture must not enter the build directory.\n")
         builder = (self.root / "skills/build_skill.py").read_text(encoding="utf-8")
@@ -152,7 +183,9 @@ class CheckDocsTests(unittest.TestCase):
             builder
             + '\nroot = Path(__file__).resolve().parent.parent\n'
             + 'if (root / "unpublished-notes.txt").exists():\n'
-            + '    raise SystemExit("Build copied an unpublished input")\n',
+            + '    raise SystemExit("Build copied an unpublished input")\n'
+            + 'if (root / "reference").exists():\n'
+            + '    raise SystemExit("Build copied the executable reference into skill inputs")\n',
         )
         before = self.snapshot()
         self.assertEqual([], check_repository(self.root, build=True))
