@@ -1,4 +1,4 @@
-# kc_state_vector
+# kc-state-vector
 
 A pagination pattern for ordered lists, search results and grouped views with a stable total order. The sort key need not be a timestamp; it needs a stable tie-breaker. **The core is a state vector and the rules for advancing it:** together they record enough of a composed query plan to pause after a page and resume later. The client or the server can hold that vector.
 
@@ -6,7 +6,7 @@ This grew out of a feed I was building. I wanted to give some items priority, th
 
 That application demonstrated the staged-feed core; the broader design also includes proposed generalizations, identified below.
 
-[Read the full pattern in **kc_state-vector.md**](./kc_state-vector.md).
+[Read the full pattern in **kc-state-vector.md**](./kc-state-vector.md).
 
 ## The small core
 
@@ -50,7 +50,7 @@ Add a capability when the result you want needs it. Each adds rules to the same 
 
 Sometimes a later stage should keep its own items. Suppose the first stage scans `[A, B, C]` and has two slots, while the second stage owns a prepared shortlist `[B]`. Reserving B before the first scan makes the first stage return **A, C**, then the second returns **B**.
 
-This is a **reservation**, not evidence that B has already appeared. The plan says which stages must yield to the reservation; its owner can still select B. Once B is selected, ordinary duplicate suppression takes over. Preparing a list alone does not reserve it: without that policy, the earlier stage may take B. The full pattern explains [reservation ownership and lifetime](./kc_state-vector.md#reservations-for-a-later-stage).
+This is a **reservation**, not evidence that B has already appeared. The plan says which stages must yield to the reservation; its owner can still select B. Once B is selected, ordinary duplicate suppression takes over. Preparing a list alone does not reserve it: without that policy, the earlier stage may take B. The full pattern explains [reservation ownership and lifetime](./kc-state-vector.md#reservations-for-a-later-stage).
 
 ### What changes for grouped results?
 
@@ -71,7 +71,7 @@ Once the result rules are clear, choose how to retain the vector and deliver eac
 
 **Stateless describes the client-held version, not the core mechanism.** It avoids an application session store by carrying state over the network. Server-held state keeps client tokens small but requires memory or storage, lifecycle management and coordination: replacing a vector blindly can skip a page when a response is lost and the client retries.
 
-The detailed worked loops use the client-held version. The main document explains [where the vector lives](./kc_state-vector.md#where-the-vector-lives), including server-held transitions and the tradeoffs between computation, retained state and communication. Neither location freezes data or grants access.
+The detailed worked loops use the client-held version. The main document explains [where the vector lives](./kc-state-vector.md#where-the-vector-lives), including server-held transitions and the tradeoffs between computation, retained state and communication. Neither location freezes data or grants access.
 
 ### Using the pattern
 
@@ -81,11 +81,11 @@ Start with the order each source can actually deliver, including a stable tie-br
 
 The full document follows the same path:
 
-1. **Core first:** [the smallest useful version](./kc_state-vector.md#the-smallest-useful-version) and [the core page loop](./kc_state-vector.md#the-core-page-loop).
-2. **Optional capabilities:** [choose the result rules you need](./kc_state-vector.md#optional-capabilities-at-a-glance), then read their examples and contracts.
-3. **Integration and reference:** [state placement](./kc_state-vector.md#where-the-vector-lives), source queries, hydration, capacity, retries and operating guidance.
+1. **Core first:** [the smallest useful version](./kc-state-vector.md#the-smallest-useful-version) and [the core page loop](./kc-state-vector.md#the-core-page-loop).
+2. **Optional capabilities:** [choose the result rules you need](./kc-state-vector.md#optional-capabilities-at-a-glance), then read their examples and contracts.
+3. **Integration and reference:** [state placement](./kc-state-vector.md#where-the-vector-lives), source queries, hydration, capacity, retries and operating guidance.
 
-The reference material includes [the full vector fields](./kc_state-vector.md#what-the-vector-carries), [the extended page-building loop](./kc_state-vector.md#how-a-page-is-built), and [worked examples](./kc_state-vector.md#examples), including a result merged from three sources.
+The reference material includes [the full vector fields](./kc-state-vector.md#what-the-vector-carries), [the extended page-building loop](./kc-state-vector.md#how-a-page-is-built), and [worked examples](./kc-state-vector.md#examples), including a result merged from three sources.
 
 This publication contains the pattern's design, worked examples and implementation guidance. The contribution is the composition of existing techniques: keyset or `search_after` cursors, ordered stages or merged sources, and overlap state that can be forgotten when no remaining scan can encounter it. The query examples use PostgreSQL and Elasticsearch/OpenSearch. Implementations must validate correctness and performance against their own sources and workloads.
 
