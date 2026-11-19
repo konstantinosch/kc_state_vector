@@ -16,18 +16,21 @@ validate the supported plans against their own source adapters and workloads.
 
 ### How to read this document
 
-Start with the small core; add only the capabilities your result needs. The full reference
-remains here, but it is not a checklist of features every implementation must support.
+Start with the small core, use the reference model to define a supported plan, then
+add only the capabilities that result needs. The implementation details remain in
+this document; they are not a checklist of features every implementation must support.
 
 | Reading path | What you get |
 |---|---|
-| [Part 1 — The small core](#part-1--the-small-core) | two ordinary staged scans, consumed positions, explicit coverage, safe pruning and the conditions for exactness |
-| [Part 2 — Optional capabilities](#part-2--optional-capabilities) | alternative coverage representations, prepared sources, reservations, grouping, horizons, merging and the extended examples |
-| [Part 3 — Integration and reference](#part-3--integration-and-reference) | storage choices, required request/source contracts, hydration, failure handling, engine guidance, optimization and operations |
+| [Part 1 — The small core](#part-1--the-small-core) | the problem, two ordinary staged scans, consumed positions, explicit coverage, safe pruning and the conditions for exactness |
+| [Part 2 — Reference model](#part-2--reference-model) | the numbered rules, ordering contract, plan/result definitions, vector fields, canonical schema, expanded loop and four-stage trace |
+| [Part 3 — Optional capabilities](#part-3--optional-capabilities) | prepared sources, reservations, grouping, horizons and examples of composed or merged results |
+| [Part 4 — Integration and reference](#part-4--integration-and-reference) | storage choices, hydration, failure handling, engine guidance, optimization, testing and operations |
 
 Authorization, stable ordering, reliable exhaustion and honest state limits are correctness
-requirements, not optional features. Part 1 states them; Part 3 supplies implementation detail.
-Numbered rule references throughout the document point to [Rules](#rules).
+requirements. Part 1 states the baseline; [Rules](#rules) consolidates the contracts near the
+start of Part 2. Part 4 supplies their implementation details. Fields and transitions for
+an unused capability are not required.
 
 ---
 
@@ -39,6 +42,23 @@ Numbered rule references throughout the document point to [Rules](#rules).
 order, their budgets and their result semantics. The vector records the execution state needed
 to resume that plan. Its transition rules determine how each selected or skipped candidate
 changes that state, including exclusions, reservations and safe pruning.
+
+### The problem it solves
+
+A client walks a long, ordered result one page at a time — a **chain** of requests. A single cursor
+does not describe every composed result; additional state may be needed when:
+
+- **The data moves underneath.** Items arrive while someone is paging, and pages shift.
+- **The result is composed.** Several sources fill one list — in a fixed priority, or merged — and
+  the same item can come from more than one of them.
+- **Some items belong to a later stage.** Earlier scans must leave a reserved set for its owner,
+  even though none of those items has been selected yet.
+- **The result is grouped.** One row stands for a group of items, and the group's other items
+  must not come back as rows of their own further down.
+
+The vector makes that continuation state explicit. It can be retained in an application session
+or carried with each request. Neither location alone establishes a consistent view of changing
+data; the visibility and mutation conditions still apply.
 
 ### The smallest useful version
 
@@ -116,7 +136,8 @@ The storage adapter publishes a successful transition under its token or revisio
 contract. Capacity failure, including a final encoded-size failure, leaves the accepted
 continuation unchanged. Payload hydration and final access checks follow selection under the
 [hydration policy](#access-checked-again-at-hydration); they can shorten delivered output.
-The [expanded page loop](#how-a-page-is-built) adds the optional operators described next.
+The [expanded page loop](#how-a-page-is-built) documents the shared transition contract,
+with hooks for the selected capabilities.
 
 ### Scope and guarantees
 
@@ -199,44 +220,84 @@ have drained. At chain completion, no continuation token is needed.
 
 ---
 
-## Part 2 — Optional capabilities
+## Part 2 — Reference model
 
-### Optional capabilities at a glance
+This is the shared contract for supported plans: what result they define, what state
+records progress, and how that state changes. It gives the precise reference behind
+the small core. The full inventory, schema and loop also show hooks for optional
+capabilities; include those fields and transitions only when the plan uses them.
+Their individual contracts follow in [Part 3](#part-3--optional-capabilities).
 
-Choose capabilities from the result semantics you need. The following material is the expanded
-reference, not a requirement to implement every field or operator. Each chosen capability must
-preserve the core invariants or explicitly declare the different result it defines.
+### Rules
 
-| Capability | Add it when | Start here |
-|---|---|---|
-| Coverage described by groups, tags or prefixes | the domain supplies a compact, correct membership test | [Exclusions describe sets of items](#exclusions-describe-sets-of-items) |
-| Prepared sources and buffers | a bounded source can be loaded early, or candidate buffering is useful | [Prepared sources and refill](#prepared-sources-and-refill) |
-| Reservations | another stage must leave a set for its future owner | [Reservations for a later stage](#reservations-for-a-later-stage) |
-| Grouped rows and episodes | one selected row represents several underlying items | [Grouped results](#grouped-results--one-row-per-group) |
-| Time or count horizons | recurrence after a declared boundary is part of the result | [Gap horizon](#the-horizon--the-gap-rule-and-plain-and-grouped-as-one-parameter) and [count horizon](#the-count-horizon) |
-| Ordered merging | several ordered sources must contribute interleaved results | [Examples](#examples), especially Example 4 |
+These numbered rules combine correctness requirements with implementation guidance.
+Coverage validity and safe retirement are required; compactness (6), cheap recomputation (7),
+execution placement (11), and the bulk-hydration schedule in 10 are choices guided by cost
+and the application's needs. They do not require adopting every optional capability.
 
-Approximate eviction changes traversal guarantees and is described separately under [The cap](#the-cap).
-Encoding optimizations preserve logical state and belong under [compact exclusions](#optimization--compact-exclusions).
-The existing worked loops and JSON traces below illustrate the client-held protocol; the same
-logical vectors can be retained server-side. The small core above is independent of that choice.
+1. **The vector and its rules define continuation.** Choose where the vector lives. The client
+   returns its opaque token or handle/revision unchanged and follows continuation even after an
+   empty page. Only the client-held version avoids an application session store.
+2. **Bind and protect continuation state.** Bind the **tenant, user and list identity** — including
+   plan version, query and filters — to the vector. Authenticate client-held payloads and verify
+   that binding before decompression. A signature stops tampering but does not encrypt the
+   contents; use authenticated encryption when confidentiality is needed. For server-held state,
+   check the stored binding before using the vector or replaying a result; an opaque or signed
+   handle is not authorization. Recheck actual access on every request and at hydration ([integration details](#part-4--integration-and-reference)).
+   A valid same-scope replay is handled by the chosen protocol, not rejected merely for being a replay.
+3. **Integrity or a successful lookup is not enough.** Validate the vector's schema/plan versions,
+   known fields, required stage state, types, ranges, positions and entry kinds before querying.
+   Item identities and rolling-group keys are unique in their appropriate scopes; fixed spans
+   are unique by group and bounds, not group alone.
+4. **The server owns the limits** — the sources, their order, each stage's grouping, window,
+   budget and horizon ("What each stage declares"), and the page-size cap. The client may ask for
+   a page size, nothing more.
+5. **Every resource has an explicit limit and overflow policy.** Prune safely and bound prepared
+   buffers, client-held token bytes, or server-held per-chain and aggregate memory plus retry data.
+   Stop exact traversal if required state cannot fit. A small handle does not bound the state
+   behind it, and a fixed state limit does not guarantee every possible chain can finish.
+6. **Exclude by the widest key that is correct**: a predicate before a group key, a group key
+   before an item id. One entry should cover as much as possible without hiding unrepresented
+   results. A predicate must reproduce the right coverage; its storage and lookup cost are separate.
+7. **Carry only what cannot be recomputed cheaply.** Whatever can be decided from the data and the
+   anchor alone does not belong in the vector (see [Group heads](#group-heads--the-case-where-nothing-needs-carrying)).
+8. **Retain required state for exact traversal.** Dropping an exclusion early may create repeats;
+   with finite budgets those repeats may displace distinct results. An approximate mode must state
+   that tradeoff. Expiry justified by the plan's declared horizon is a result rule, while expiry
+   justified by all remaining scans passing the entry is safe pruning.
+9. **Deterministic.** The same vector, plan, request and fixed data give the same page. State
+   transitions happen per candidate or selected row, not only when state is serialized or committed.
+10. **Separate selection, hydration and presentation.** Sources return IDs and stable sort positions,
+    whichever engine answers — a database or a search engine. Group membership may be supplied
+    by a separate bounded metadata lookup during selection; it need not live in the scan index.
+    Prefer bulk hydration after page selection finishes: collect the complete page's IDs of
+    interest and batch the required payload reads per relation or backing service, splitting into
+    bounded chunks where necessary. This gives the payload queries a predictable batch structure
+    and avoids per-candidate reads. One hydration phase may use several queries. This is the
+    recommended default illustrated by the loops, not a required hydration schedule.
+    Presentation reorders the bounded page for display and never touches cursors or exclusions.
+11. **Apply each exclusion where it is cheapest** — in memory in the page loop, as a filter on an
+    ordered scan that stops at the page, or as a merge of sorted document lists in an inverted
+    index. Preserve semantics and required skip-state updates, then compare execution plans and
+    measured costs; a relational anti-join is an option, not a correctness violation.
+12. **The stages of one list share its scope.** The list's filters (views, tags, field matches,
+    access) apply per item, and alike in every stage; a stage's own criterion only decides which
+    items come first. So an item served by any stage is served for the whole list, and every
+    stage can honour every other stage's exclusions.
 
-### The problem it solves
+### Positions and ties
 
-A client walks a long, ordered result one page at a time — a **chain** of requests. A single cursor
-does not describe every composed result; additional state may be needed when:
-
-- **The data moves underneath.** Items arrive while someone is paging, and pages shift.
-- **The result is composed.** Several sources fill one list — in a fixed priority, or merged — and
-  the same item can come from more than one of them.
-- **Some items belong to a later stage.** Earlier scans must leave a reserved set for its owner,
-  even though none of those items has been selected yet.
-- **The result is grouped.** One row stands for a group of items, and the group's other items
-  must not come back as rows of their own further down.
-
-The vector makes that continuation state explicit. It can be retained in an application session
-or carried with each request. Neither location alone establishes a consistent view of changing
-data; the visibility and mutation conditions still apply.
+- **A position is a tuple** `(sort key, id)`, compared as a tuple for cursors, span membership and
+  oldest-position pruning. Only duration-based gap tests use the time component alone. Comparing
+  just the sort key for identity boundaries can drop an equal-key entry too early.
+- **Every source orders an item the same way.** An item reachable from two sources must have the
+  same position in both for the shared-entry representation here. Otherwise pruning can occur
+  before another source reaches the item, creating a repeat and possibly displacing other results.
+  Likewise, copies of one item in two partitions fold only when they share `(time, item id)`.
+- **Across engines, ties match only when you make them.** Compare ids as bytes (`COLLATE "C"` in
+  Postgres; Elasticsearch `keyword` already sorts by bytes), or use numeric ids; and use one
+  timestamp precision on both sides — Postgres keeps microseconds, Elasticsearch `date`
+  milliseconds (`date_nanos` keeps more).
 
 ### How capabilities map to the vector
 
@@ -445,88 +506,6 @@ define it:
   must not change it. Specify horizon transitions and any approximate eviction policy independently
   of page boundaries. Presentation reordering is outside this equality.
 
-### Prepared sources and refill
-
-A complete bounded source can be carried once and served from an offset. A buffer containing only
-the first B candidates of a larger source is different: earlier stages may consume those candidates
-without exhausting the later stage's output budget.
-
-For example, an earlier stage serves A, and a later source is `[A, B, C]` with output budget 2.
-Preparing `[A, B]` and removing A leaves only B. Exact source-minus-prior-output semantics require
-refilling to reach C, so the later stage serves B and C.
-
-A refillable prepared source carries its remaining buffer, a **fetch cursor**, and an
-`exhausted` flag. The fetch cursor may pass buffered, unconsumed candidates only because all such
-candidates remain in the vector. It is distinct from the **consumed cursor** used by the page loop
-and prefix predicates. Refill below the fetch cursor when the buffer empties, retaining applicable
-overlap state and reapplying exclusions. Mark exhaustion only after a complete source read proves
-it; an empty cleaned buffer alone proves nothing. In exact mode, do not silently drop unconsumed
-buffer entries to fit a storage or token limit. Preparation and refill reads need their own
-work limits.
-
-Alternatively, define a fixed shortlist as the stage's entire source, or overfetch by a proven
-bound on earlier overlap. State that choice. S3 in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages) uses its entire four-item source,
-so no refill is needed; its `loaded` flag and offset are sufficient.
-
-### Reservations for a later stage
-
-**A reservation means "leave this set for its owning stage", not "this set has already been
-served".** Preparation alone does not confer ownership: in the [prepared-source example](#prepared-sources-and-refill), an earlier stage
-may take A from a prepared list. A plan can instead reserve a later stage's items before an
-earlier overlapping scan starts. The exclusion test then applies to the stages that must yield,
-while the owner ignores its own reservation and still checks ordinary duplicate exclusions.
-IDs, group descriptors and predicates can describe either kind of set; the plan distinguishes
-pending ownership from prior coverage even when their membership tests have the same shape.
-
-For example, S1 scans `[A, B, C]` in that order with budget 2. S2's complete prepared source is
-`[B]`, with budget 1. The plan reserves B for S2 before S1 starts:
-
-| Page, with size 2 | Selected rows | What happens |
-|---|---|---|
-| 1 | A, C | S1 selects A, skips reserved B, and selects C. B remains pending for S2. |
-| 2 | B | S2 selects its reserved item and the plan finishes. |
-
-The canonical selection is `[A, C, B]`, regardless of page boundaries. Without reservation,
-ordinary earlier-stage priority would produce `[A, B]`; S2 would find B already represented.
-Only identities, positions and any required grouping metadata are prepared here. Payload
-hydration remains a separate concern.
-
-The bound plan declares the owner, the stages that yield, the reserved set and its lifecycle:
-
-- **Establish the set before it can be taken.** A simple implementation freezes a bounded,
-  deterministic shortlist before the first affected scan. Its existing prepared list and offset
-  can supply the reservation state; no duplicate list or mandatory new token field is needed.
-  A stable, evaluable predicate can reserve a category instead. The same scope, anchor and
-  visibility requirements apply. Loading only part of a source reserves only those known items,
-  unless a separate predicate describes the full reserved set.
-- **Resolve ownership consistently.** If reserved sets overlap, assign the overlap by a
-  deterministic plan rule before affected scans run. Two owners must not suppress each other's
-  claims indefinitely. Other predicates must respect that assignment too: an earlier stage's
-  whole-category exclusion must not accidentally hide the owner's reserved rows. Carve out the
-  reserved set or resolve the conflicting policies before scanning. With grouped rows, ownership
-  must account for the represented members:
-  excluding one candidate ID alone does not stop a different candidate from selecting a group
-  containing it. Apply the plan's partial-group policy where needed.
-- **Reservation is not selection.** Creating one does not increment `served` or `selectedTotal`,
-  start a selected-row horizon, or advance the owner's consumed cursor. When the owner selects
-  a row, resolve that reservation and record the ordinary coverage needed by remaining scans.
-  If the owner encounters a pending item already covered elsewhere, resolve it as covered without
-  selecting it again. The owning stage ignores its own reservation, not prior coverage.
-- **Retain pending work.** An earlier cursor passing B does not make S2's pending B disposable.
-  Keep the prepared entry, or enough state to reproduce it exactly, until the owner resolves it.
-  A reservation's lifetime follows ownership; ordinary coverage pruning applies after selection.
-  Skipping reserved items also leaves holes in a scan's represented prefix: its terminal cursor
-  alone cannot justify suppressing those items in the owning stage.
-- **Account for items the owner will not serve.** Prefer a shortlist that fits its remaining
-  selection budget. Reserving a whole category but serving only its first K rows intentionally
-  omits the rest unless the plan provides a fallback. Cancellation or release cannot recover items
-  behind an already advanced cursor; preserving them requires a remaining source or carried work
-  that can still serve them. Declare that policy instead of silently dropping pending reservations.
-
-Reservation preparation and retained state have their own work and size limits. Their membership,
-ownership and transitions must not depend on page size or batch boundaries. Live deletions and
-access changes still have the limitations described under [integration and reference](#part-3--integration-and-reference).
-
 ### The vector as an object
 
 This reference example includes optional
@@ -572,7 +551,7 @@ Validate each kind's arity, types, ordering and compatibility with its plan. Spa
 ordered and are part of the entry's identity. A count horizon adds `born` to the applicable entry
 and carries the [chain's selected-row count](#the-count-horizon). An implementation must version
 its complete schema; these examples omit the client-held token envelope and server-held binding/revision metadata
-described under [integration and reference](#part-3--integration-and-reference).
+described under [integration and reference](#part-4--integration-and-reference).
 
 For readability, the homogeneous item trace below abbreviates `["item", position]` to `position`.
 The grouped examples also use explicit **single-source shorthand**: `cursor: P` and `excl: E` stand for
@@ -594,7 +573,7 @@ reservation and horizon operations apply only when the plan selects those capabi
 
 This loop illustrates the client-held protocol around the shared selection rules. A server-held
 implementation loads and validates the stored vector before selection, then publishes the result
-through the revision and replay contract under [integration and reference](#part-3--integration-and-reference) instead of serializing the vector to the client.
+through the revision and replay contract under [integration and reference](#part-4--integration-and-reference) instead of serializing the vector to the client.
 
 ```
 validate the vector (signature, version, then every field)
@@ -755,6 +734,140 @@ S4 creates no exclusions for its own rows. By page 5 it has drained the earlier 
 S2's category predicate remains applicable. A refresh starts a new chain with a new watermark
 that includes h, and h appears at the top.
 
+### Deterministic ordered stages
+
+One list served from sources in a fixed priority, each source exhausted or its budget spent
+before the next. The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) has this shape. Under the exact-mode assumptions, retained
+exclusions prevent cross-stage duplicates.
+
+Prepared sources, reservations and predicate compression below apply only when selected
+by the plan; ordinary ordered stages need none of those capabilities.
+
+What it asks of the mechanism:
+
+- **Stages:** one page filled across sources in order; proven exhaustion or a spent output budget
+  ends a stage. A request work limit only pauses it.
+- **Prepared lists:** a complete bounded source can be prepared early and cleaned as earlier
+  stages serve. A partial buffer must refill; preparation moves work earlier rather than removing it.
+- **Reservations:** optionally assign a prepared set to a later stage before earlier scans can
+  take it; the plan distinguishes pending ownership from already selected coverage.
+- **Predicate exclusion:** use either an intentional whole-category quota or a proven consumed
+  prefix, as defined in [The result a plan defines](#the-result-a-plan-defines).
+- **Both engines, one shape:** adapters can return `(sort key, id)` in a compatible order,
+  with grouping metadata resolved separately where needed, provided they establish the required
+  visibility and source semantics.
+- **Presentation apart:** items of one group spread apart on each page, optionally in a seeded
+  order per day; cursors and exclusions follow the canonical order.
+- **Strict validation and a bound continuation protocol**, using a protected client-held token
+  or a server-held handle/revision; test both validation and page walking ([Testing](#testing)).
+
+---
+
+## Part 3 — Optional capabilities
+
+### Optional capabilities at a glance
+
+Choose capabilities from the result semantics you need. Each uses the shared
+[reference model](#part-2--reference-model) and supplies its own additional contract.
+Adopting one does not require every field or operator; preserve the core invariants
+or explicitly declare the different result the capability defines.
+
+| Capability | Add it when | Start here |
+|---|---|---|
+| Coverage described by groups, tags or prefixes | the domain supplies a compact, correct membership test | [Exclusions describe sets of items](#exclusions-describe-sets-of-items) |
+| Prepared sources and buffers | a bounded source can be loaded early, or candidate buffering is useful | [Prepared sources and refill](#prepared-sources-and-refill) |
+| Reservations | another stage must leave a set for its future owner | [Reservations for a later stage](#reservations-for-a-later-stage) |
+| Grouped rows and episodes | one selected row represents several underlying items | [Grouped results](#grouped-results--one-row-per-group) |
+| Time or count horizons | recurrence after a declared boundary is part of the result | [Gap horizon](#the-horizon--the-gap-rule-and-plain-and-grouped-as-one-parameter) and [count horizon](#the-count-horizon) |
+| Ordered merging | several ordered sources must contribute interleaved results | [Examples](#examples), especially Example 4 |
+
+Approximate eviction changes traversal guarantees and is described separately under [The cap](#the-cap).
+Encoding optimizations preserve logical state and belong under [compact exclusions](#optimization--compact-exclusions).
+The expanded and grouped loops and their JSON traces illustrate the client-held protocol;
+the same logical vectors can be retained server-side. The small core is independent of that choice.
+
+### Prepared sources and refill
+
+A complete bounded source can be carried once and served from an offset. A buffer containing only
+the first B candidates of a larger source is different: earlier stages may consume those candidates
+without exhausting the later stage's output budget.
+
+For example, an earlier stage serves A, and a later source is `[A, B, C]` with output budget 2.
+Preparing `[A, B]` and removing A leaves only B. Exact source-minus-prior-output semantics require
+refilling to reach C, so the later stage serves B and C.
+
+A refillable prepared source carries its remaining buffer, a **fetch cursor**, and an
+`exhausted` flag. The fetch cursor may pass buffered, unconsumed candidates only because all such
+candidates remain in the vector. It is distinct from the **consumed cursor** used by the page loop
+and prefix predicates. Refill below the fetch cursor when the buffer empties, retaining applicable
+overlap state and reapplying exclusions. Mark exhaustion only after a complete source read proves
+it; an empty cleaned buffer alone proves nothing. In exact mode, do not silently drop unconsumed
+buffer entries to fit a storage or token limit. Preparation and refill reads need their own
+work limits.
+
+Alternatively, define a fixed shortlist as the stage's entire source, or overfetch by a proven
+bound on earlier overlap. State that choice. S3 in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages) uses its entire four-item source,
+so no refill is needed; its `loaded` flag and offset are sufficient.
+
+### Reservations for a later stage
+
+**A reservation means "leave this set for its owning stage", not "this set has already been
+served".** Preparation alone does not confer ownership: in the [prepared-source example](#prepared-sources-and-refill), an earlier stage
+may take A from a prepared list. A plan can instead reserve a later stage's items before an
+earlier overlapping scan starts. The exclusion test then applies to the stages that must yield,
+while the owner ignores its own reservation and still checks ordinary duplicate exclusions.
+IDs, group descriptors and predicates can describe either kind of set; the plan distinguishes
+pending ownership from prior coverage even when their membership tests have the same shape.
+
+For example, S1 scans `[A, B, C]` in that order with budget 2. S2's complete prepared source is
+`[B]`, with budget 1. The plan reserves B for S2 before S1 starts:
+
+| Page, with size 2 | Selected rows | What happens |
+|---|---|---|
+| 1 | A, C | S1 selects A, skips reserved B, and selects C. B remains pending for S2. |
+| 2 | B | S2 selects its reserved item and the plan finishes. |
+
+The canonical selection is `[A, C, B]`, regardless of page boundaries. Without reservation,
+ordinary earlier-stage priority would produce `[A, B]`; S2 would find B already represented.
+Only identities, positions and any required grouping metadata are prepared here. Payload
+hydration remains a separate concern.
+
+The bound plan declares the owner, the stages that yield, the reserved set and its lifecycle:
+
+- **Establish the set before it can be taken.** A simple implementation freezes a bounded,
+  deterministic shortlist before the first affected scan. Its existing prepared list and offset
+  can supply the reservation state; no duplicate list or mandatory new token field is needed.
+  A stable, evaluable predicate can reserve a category instead. The same scope, anchor and
+  visibility requirements apply. Loading only part of a source reserves only those known items,
+  unless a separate predicate describes the full reserved set.
+- **Resolve ownership consistently.** If reserved sets overlap, assign the overlap by a
+  deterministic plan rule before affected scans run. Two owners must not suppress each other's
+  claims indefinitely. Other predicates must respect that assignment too: an earlier stage's
+  whole-category exclusion must not accidentally hide the owner's reserved rows. Carve out the
+  reserved set or resolve the conflicting policies before scanning. With grouped rows, ownership
+  must account for the represented members:
+  excluding one candidate ID alone does not stop a different candidate from selecting a group
+  containing it. Apply the plan's partial-group policy where needed.
+- **Reservation is not selection.** Creating one does not increment `served` or `selectedTotal`,
+  start a selected-row horizon, or advance the owner's consumed cursor. When the owner selects
+  a row, resolve that reservation and record the ordinary coverage needed by remaining scans.
+  If the owner encounters a pending item already covered elsewhere, resolve it as covered without
+  selecting it again. The owning stage ignores its own reservation, not prior coverage.
+- **Retain pending work.** An earlier cursor passing B does not make S2's pending B disposable.
+  Keep the prepared entry, or enough state to reproduce it exactly, until the owner resolves it.
+  A reservation's lifetime follows ownership; ordinary coverage pruning applies after selection.
+  Skipping reserved items also leaves holes in a scan's represented prefix: its terminal cursor
+  alone cannot justify suppressing those items in the owning stage.
+- **Account for items the owner will not serve.** Prefer a shortlist that fits its remaining
+  selection budget. Reserving a whole category but serving only its first K rows intentionally
+  omits the rest unless the plan provides a fallback. Cancellation or release cannot recover items
+  behind an already advanced cursor; preserving them requires a remaining source or carried work
+  that can still serve them. Declare that policy instead of silently dropping pending reservations.
+
+Reservation preparation and retained state have their own work and size limits. Their membership,
+ownership and transitions must not depend on page size or batch boundaries. Live deletions and
+access changes still have the limitations described under [integration and reference](#part-4--integration-and-reference).
+
 ### Grouped results — one row per group
 
 This optional capability changes what a selected row represents. It keeps the consumed-cursor
@@ -778,7 +891,7 @@ can see, and with the same item reachable through more than one of them.
 | horizon | the stage's own ([What each stage declares](#what-each-stage-declares)): a time H under the gap rule (below), a count, or both |
 | predicate exclusions | group-level conditions that rule a whole group out — re-evaluated for every candidate, so a group they rule out needs no exclusion entry; the reader-specific values they use can be frozen in the vector under the [stage contract](#what-each-stage-declares) |
 | presentation | the group's items under its row — hydration and display only |
-| not carried as authorization | the viewer's partitions — read on every request and rechecked at hydration ([integration details](#part-3--integration-and-reference)) |
+| not carried as authorization | the viewer's partitions — read on every request and rechecked at hydration ([integration details](#part-4--integration-and-reference)) |
 
 ```json
 { "v": 1, "anchor": { "seq": 5000 }, "cursor": ["2026-11-12T08:00", "i6"],
@@ -794,7 +907,7 @@ design explicit per-consumer state and validate that additional composition sepa
 The vector carries no plan parameter — no stage list, budget, horizon or merge mode — and no
 scope (the list's query and filters): the signature binds both (rule 2), so a token presented to
 another plan or another list is rejected. This example reads the viewer's partitions live on every
-request. An alternative may bind an access-scope version to force restarts on changes ([integration details](#part-3--integration-and-reference)),
+request. An alternative may bind an access-scope version to force restarts on changes ([integration details](#part-4--integration-and-reference)),
 but the token never grants access.
 
 #### The page loop
@@ -1068,29 +1181,7 @@ request. Bind the full relevant access state, not just partitions if item-level 
   - database and search adapters can share a result shape, while ordering, visibility and work
     limits must be established separately for each engine.
 - **Operations:** token size, keys and expiry, or stored-state capacity, coordination and recovery;
-  metrics and support tools for either version — [integration and reference](#part-3--integration-and-reference).
-
-### Deterministic ordered stages
-
-One list served from sources in a fixed priority, each source exhausted or its budget spent
-before the next. The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) has this shape. Under the exact-mode assumptions, retained
-exclusions prevent cross-stage duplicates. What it asks of the mechanism:
-
-- **Stages:** one page filled across sources in order; proven exhaustion or a spent output budget
-  ends a stage. A request work limit only pauses it.
-- **Prepared lists:** a complete bounded source can be prepared early and cleaned as earlier
-  stages serve. A partial buffer must refill; preparation moves work earlier rather than removing it.
-- **Reservations:** optionally assign a prepared set to a later stage before earlier scans can
-  take it; the plan distinguishes pending ownership from already selected coverage.
-- **Predicate exclusion:** use either an intentional whole-category quota or a proven consumed
-  prefix, as defined in [The result a plan defines](#the-result-a-plan-defines).
-- **Both engines, one shape:** adapters can return `(sort key, id)` in a compatible order,
-  with grouping metadata resolved separately where needed, provided they establish the required
-  visibility and source semantics.
-- **Presentation apart:** items of one group spread apart on each page, optionally in a seeded
-  order per day; cursors and exclusions follow the canonical order.
-- **Strict validation and a bound continuation protocol**, using a protected client-held token
-  or a server-held handle/revision; test both validation and page walking ([Testing](#testing)).
+  metrics and support tools for either version — [integration and reference](#part-4--integration-and-reference).
 
 ### The shapes it fits
 
@@ -1184,7 +1275,7 @@ whose decoded fields do not validate is rejected with 400; the client starts a f
 
 ---
 
-## Part 3 — Integration and reference
+## Part 4 — Integration and reference
 
 These sections explain how to operate the core and whichever capabilities you selected.
 They include required contracts, not just optional tuning: authorization, source ordering,
@@ -1233,72 +1324,6 @@ concurrency and expiry. Neither version guarantees exactly-once receipt or displ
 client-held version unless stated otherwise. The traces show the same logical state a server
 could retain. Token-specific validation and serialization wrap the shared selection rules;
 server-held implementations use lookup and coordinated publication instead.
-
-### Rules
-
-1. **The vector and its rules define continuation.** Choose where the vector lives. The client
-   returns its opaque token or handle/revision unchanged and follows continuation even after an
-   empty page. Only the client-held version avoids an application session store.
-2. **Bind and protect continuation state.** Bind the **tenant, user and list identity** — including
-   plan version, query and filters — to the vector. Authenticate client-held payloads and verify
-   that binding before decompression. A signature stops tampering but does not encrypt the
-   contents; use authenticated encryption when confidentiality is needed. For server-held state,
-   check the stored binding before using the vector or replaying a result; an opaque or signed
-   handle is not authorization. Recheck actual access on every request and at hydration ([integration details](#part-3--integration-and-reference)).
-   A valid same-scope replay is handled by the chosen protocol, not rejected merely for being a replay.
-3. **Integrity or a successful lookup is not enough.** Validate the vector's schema/plan versions,
-   known fields, required stage state, types, ranges, positions and entry kinds before querying.
-   Item identities and rolling-group keys are unique in their appropriate scopes; fixed spans
-   are unique by group and bounds, not group alone.
-4. **The server owns the limits** — the sources, their order, each stage's grouping, window,
-   budget and horizon ("What each stage declares"), and the page-size cap. The client may ask for
-   a page size, nothing more.
-5. **Every resource has an explicit limit and overflow policy.** Prune safely and bound prepared
-   buffers, client-held token bytes, or server-held per-chain and aggregate memory plus retry data.
-   Stop exact traversal if required state cannot fit. A small handle does not bound the state
-   behind it, and a fixed state limit does not guarantee every possible chain can finish.
-6. **Exclude by the widest key that is correct**: a predicate before a group key, a group key
-   before an item id. One entry should cover as much as possible without hiding unrepresented
-   results. A predicate must reproduce the right coverage; its storage and lookup cost are separate.
-7. **Carry only what cannot be recomputed cheaply.** Whatever can be decided from the data and the
-   anchor alone does not belong in the vector (see [Group heads](#group-heads--the-case-where-nothing-needs-carrying)).
-8. **Retain required state for exact traversal.** Dropping an exclusion early may create repeats;
-   with finite budgets those repeats may displace distinct results. An approximate mode must state
-   that tradeoff. Expiry justified by the plan's declared horizon is a result rule, while expiry
-   justified by all remaining scans passing the entry is safe pruning.
-9. **Deterministic.** The same vector, plan, request and fixed data give the same page. State
-   transitions happen per candidate or selected row, not only when state is serialized or committed.
-10. **Separate selection, hydration and presentation.** Sources return IDs and stable sort positions,
-    whichever engine answers — a database or a search engine. Group membership may be supplied
-    by a separate bounded metadata lookup during selection; it need not live in the scan index.
-    Prefer bulk hydration after page selection finishes: collect the complete page's IDs of
-    interest and batch the required payload reads per relation or backing service, splitting into
-    bounded chunks where necessary. This gives the payload queries a predictable batch structure
-    and avoids per-candidate reads. One hydration phase may use several queries. This is the
-    recommended default illustrated by the loops, not a required hydration schedule.
-    Presentation reorders the bounded page for display and never touches cursors or exclusions.
-11. **Apply each exclusion where it is cheapest** — in memory in the page loop, as a filter on an
-    ordered scan that stops at the page, or as a merge of sorted document lists in an inverted
-    index. Preserve semantics and required skip-state updates, then compare execution plans and
-    measured costs; a relational anti-join is an option, not a correctness violation.
-12. **The stages of one list share its scope.** The list's filters (views, tags, field matches,
-    access) apply per item, and alike in every stage; a stage's own criterion only decides which
-    items come first. So an item served by any stage is served for the whole list, and every
-    stage can honour every other stage's exclusions.
-
-### Positions and ties
-
-- **A position is a tuple** `(sort key, id)`, compared as a tuple for cursors, span membership and
-  oldest-position pruning. Only duration-based gap tests use the time component alone. Comparing
-  just the sort key for identity boundaries can drop an equal-key entry too early.
-- **Every source orders an item the same way.** An item reachable from two sources must have the
-  same position in both for the shared-entry representation here. Otherwise pruning can occur
-  before another source reaches the item, creating a repeat and possibly displacing other results.
-  Likewise, copies of one item in two partitions fold only when they share `(time, item id)`.
-- **Across engines, ties match only when you make them.** Compare ids as bytes (`COLLATE "C"` in
-  Postgres; Elasticsearch `keyword` already sorts by bytes), or use numeric ids; and use one
-  timestamp precision on both sides — Postgres keeps microseconds, Elasticsearch `date`
-  milliseconds (`date_nanos` keeps more).
 
 ### The token
 
