@@ -612,11 +612,14 @@ while the page is not full and a stage remains and remaining > 0:
     for each candidate c in batch, in order:
         if the page is full or the stage's budget is spent or remaining = 0: stop
         the stage's cursor = c; remaining -= 1                 -- served or skipped
-        apply the plan's horizon transitions and safe pruning
+        apply the plan's declared horizon transitions
         recheck exclusions and applicable reservations, including changes earlier in this batch
-        if c is excluded: update required skip state; continue
-        serve c; resolve any reservation it owns
-        record coverage needed by remaining scans; update prepared lists and counters
+        if c is excluded:
+            update required skip state
+        else:
+            serve c; resolve any reservation it owns
+            record coverage needed by remaining scans; update prepared lists and counters
+        after c's decision, prune coverage no remaining consumer can encounter
         enforce the declared state-cap policy at this candidate boundary
         if exact state cannot fit: discard this tentative page; return a capacity error
     if the stage's budget is spent or (exhausted and batch wholly consumed):
@@ -633,6 +636,10 @@ return the page and, only if hasMore, its continuation token
 - **Consumed:** a candidate the loop has reached — served or skipped. The cursor is the last
   candidate consumed, never one fetched and not reached, so stopping mid-batch loses nothing: the
   next request fetches the rest again.
+- **Pruning:** reaching a covered position does not make the current candidate safe to emit.
+  Decide whether it is excluded before retiring its coverage, including on the skipped branch.
+  Declared horizon transitions may intentionally change eligibility before that decision; they
+  are result semantics, distinct from reachability-based pruning. Unstarted stages remain consumers.
 - **Pushed down, or in memory:** push down only exclusions valid throughout the fetched range
   under every state the loop can reach. A count-based exclusion that may expire inside the batch
   cannot simply filter that entire batch. Use raw candidates or an adapter that preserves those
