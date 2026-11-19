@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "id": "core-reservations-v1",
+    "archive_sha256": "72976ba68f7920f71955746a1151bf9edf82692c5dd8f3b597f0e41d37ba9607",
+    "manifest_sha256": "903b26988a65acd85c5245ae076e487aac9d11e200e788b9d323ba3df5e207fc"
+  },
+  "scope": "Core and explicit-ID reservations on fixed finite data; no grouped/ownership extensions, engines, hydration or authenticated transport.",
+  "files": {
+    "__init__.py": {
+      "origin": "local_reference/__init__.py",
+      "origin_sha256": "2184b956ffb7fa9866a8cc04b9bcc97f77dffe577ac3a4e132b97424ff226511",
+      "sha256": "3a954fb1e8a6f963f6835a216e45897d65c4db9b23e0bd2eea3d04c35b835239",
+      "adaptations": [
+        "Reject optimized Python before importing the unchanged model; the frozen local initializer is preserved."
+      ]
+    },
+    "__main__.py": {
+      "origin": "local_reference/__main__.py",
+      "origin_sha256": "5a24c90e8a96ea9c11b64cd2dde755b625aae68fdbbafe426f70da4d8135b854",
+      "sha256": "5a24c90e8a96ea9c11b64cd2dde755b625aae68fdbbafe426f70da4d8135b854",
+      "adaptations": []
+    },
+    "model.py": {
+      "origin": "local_reference/model.py",
+      "origin_sha256": "7fa8a4fd3d5c824d37a2c50d6cc82f88c126f87d1c6791fba620e86b9250f360",
+      "sha256": "7fa8a4fd3d5c824d37a2c50d6cc82f88c126f87d1c6791fba620e86b9250f360",
+      "adaptations": []
+    },
+    "oracle.py": {
+      "origin": "local_reference/oracle.py",
+      "origin_sha256": "3096340dd72127969453c268c62a0aca54945d362dbe448b5fbe6975242c0dad",
+      "sha256": "3096340dd72127969453c268c62a0aca54945d362dbe448b5fbe6975242c0dad",
+      "adaptations": []
+    },
+    "retirement.py": {
+      "origin": "local_reference/retirement.py",
+      "origin_sha256": "0595b032b058fd1fe52f4a4f2ce6c43a408961c3120a2a0c453c6751295b33b4",
+      "sha256": "0595b032b058fd1fe52f4a4f2ce6c43a408961c3120a2a0c453c6751295b33b4",
+      "adaptations": []
+    },
+    "capacity_checks.py": {
+      "origin": "local_reference/capacity_checks.py",
+      "origin_sha256": "d2024ad64c02a98ff69ddc1316cc60b2b9c719115a817e342a80036f054526fe",
+      "sha256": "d2024ad64c02a98ff69ddc1316cc60b2b9c719115a817e342a80036f054526fe",
+      "adaptations": []
+    },
+    "failure_checks.py": {
+      "origin": "local_reference/failure_checks.py",
+      "origin_sha256": "8ca9c83129c6dfe4a106d0e33bed42e3e29e566840041fd3881c79569c06768a",
+      "sha256": "8ca9c83129c6dfe4a106d0e33bed42e3e29e566840041fd3881c79569c06768a",
+      "adaptations": []
+    },
+    "closing.py": {
+      "origin": "local_reference/closing.py",
+      "origin_sha256": "e5a36ebbd56ecf481b55ddc344f2fa9dad3d45783b209c9647e567d80fc80267",
+      "sha256": "cbc2a010b9756577b8f92a044324981c10f64ff72a281f8dcdf604531391831a",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands.",
+        "Use a platform-neutral Python command in generated report instructions."
+      ]
+    },
+    "long_scenarios.py": {
+      "origin": "local_reference/long_scenarios.py",
+      "origin_sha256": "06167b6148dd9915df264f19fd74dc20f39de0579d169ea3924d1a4807a2030a",
+      "sha256": "06167b6148dd9915df264f19fd74dc20f39de0579d169ea3924d1a4807a2030a",
+      "adaptations": []
+    },
+    "long_traversals.py": {
+      "origin": "local_reference/long_traversals.py",
+      "origin_sha256": "e10a02da6b1130aed239435b505cb8ff1fe2b16798356beff4c9a22e9a8ee955",
+      "sha256": "e10a02da6b1130aed239435b505cb8ff1fe2b16798356beff4c9a22e9a8ee955",
+      "adaptations": []
+    },
+    "tiny_plans.py": {
+      "origin": "local_reference/tiny_plans.py",
+      "origin_sha256": "905893faebac5280211a654ab261aa7573cb66118cc561ea122baabb7da20675",
+      "sha256": "905893faebac5280211a654ab261aa7573cb66118cc561ea122baabb7da20675",
+      "adaptations": []
+    },
+    "tiny_checker.py": {
+      "origin": "local_reference/tiny_checker.py",
+      "origin_sha256": "756ed3b1af6fd6c89be60ed30a3dfa5e7733f33fe8221e317c3600a3ed829edb",
+      "sha256": "756ed3b1af6fd6c89be60ed30a3dfa5e7733f33fe8221e317c3600a3ed829edb",
+      "adaptations": []
+    },
+    "exhaustive.py": {
+      "origin": "local_reference/exhaustive.py",
+      "origin_sha256": "d3a57956502b95b559b5ed673be685241b1d724e247aa990b2bc5a4083595be3",
+      "sha256": "e0066409d49fbd6bd036fd0014d8dd08c679b4961bbe781a44374882322c0cbc",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/__init__.py": {
+      "origin": "local_reference/tests/__init__.py",
+      "origin_sha256": "d8b599639a6ecc9eb92ba24290774c430714df84fc1ba78afc1b5d2762c147a1",
+      "sha256": "d8b599639a6ecc9eb92ba24290774c430714df84fc1ba78afc1b5d2762c147a1",
+      "adaptations": []
+    },
+    "tests/test_boundaries.py": {
+      "origin": "local_reference/tests/test_boundaries.py",
+      "origin_sha256": "8118024bcf8c32d3f11f9aa4cb9f8528a387735ef39c2e1bc0f2237094fd988b",
+      "sha256": "cd80bfde8a1403838d3ee4b23a0614ac89708186360e8fcff25fde23e74a1766",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_capacity_closure.py": {
+      "origin": "local_reference/tests/test_capacity_closure.py",
+      "origin_sha256": "dea74ae137ced85a9500bdf3b716353f8596adc3ac9c23bd5353392c5dfe8cd5",
+      "sha256": "28489d6f4b626b4e6024d3bb7a20fe9b77ed321ed5cbb30f5f3a637ef5e96adf",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_exhaustive_reporting.py": {
+      "origin": "local_reference/tests/test_exhaustive_reporting.py",
+      "origin_sha256": "2b41eebe66e957f1e6ec8ca0f26a7d776b295d58b12c6039e537773cf6ed24bc",
+      "sha256": "badcf1a69d19665c35e5dd710429aa89698317dd161c75f853f5d8ea9b9f580c",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_failure_closure.py": {
+      "origin": "local_reference/tests/test_failure_closure.py",
+      "origin_sha256": "a1cf1fdd7e758edc2a858693bf8171ca06e0006c4326157a13c55f8f8e762b76",
+      "sha256": "2435947f9aeefdb941c1278836c01320254a64702594eb2259212affe4680c4a",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_long_traversals.py": {
+      "origin": "local_reference/tests/test_long_traversals.py",
+      "origin_sha256": "af4ec4b2fde890c50fe6df4975311acc00a988a75ece623d1d613d1e098d3deb",
+      "sha256": "33c041afacc1b53c60952bed3e40272ddc4852a04693927af2419eb501dc91d1",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands.",
+        "Write the unchanged 39-traversal matrix reports to a temporary directory, and assert the report exists."
+      ]
+    },
+    "tests/test_reference.py": {
+      "origin": "local_reference/tests/test_reference.py",
+      "origin_sha256": "408fb5c7d44f2263bb44cff63c98207b2917b2c39fb6f807255cb840451094ee",
+      "sha256": "db54e005f2dc6027cdb012ca277dbf2af2990387b875dd0560af0870d7dd6d44",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands.",
+        "Import the two legacy checks from the vendored test-only helper instead of root review_checks.py; update their docstring attribution."
+      ]
+    },
+    "tests/test_retirement.py": {
+      "origin": "local_reference/tests/test_retirement.py",
+      "origin_sha256": "cdc0e3ef0e75b672d1ff711661b95d87bb9ed08ae5a4aaf3cfb0d89207c87c4f",
+      "sha256": "ff323f3b03cdf4704484693f68744417235305b77a5dddf1d43c9db834dcc87f",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_tiny_checker.py": {
+      "origin": "local_reference/tests/test_tiny_checker.py",
+      "origin_sha256": "9a42b3c41ae04fe77686db7b728c86f3fc23f482251013eb60c2571c251828ac",
+      "sha256": "ee67c84ecc93c6dd15317439512af44a817416ecdadbb7c4e7761286aee2e222",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/test_tiny_plans.py": {
+      "origin": "local_reference/tests/test_tiny_plans.py",
+      "origin_sha256": "7975e5ebc95d5e4bcc181879faad1a380ade97ac0b6847f2fdff9ab8663eee52",
+      "sha256": "a5a4763e770b419794261bb1f0ae52a42c2f6dd7e74d0418f6f26e01cf08198d",
+      "adaptations": [
+        "Replace package name local_reference with reference in imports, patch targets and commands."
+      ]
+    },
+    "tests/legacy_helpers.py": {
+      "origin": "review_checks.py",
+      "origin_sha256": "c43ae07766289bca4769a9add50b7049ece9d0183a61f414688e79884c848d11",
+      "sha256": "e59eddec648d59ad4d3ba93d28ec8235499b67afc761f91153ec78f7993ab865",
+      "adaptations": [
+        "Vendor the three named function bodies without edits; omit unrelated demonstrations and add a provenance docstring."
+      ],
+      "extracted_functions": {
+        "stage": "8057d46f45b4414b732e5dc61a084f564525ae9d68dedbd96b9c033edc833ec2",
+        "prepared_buffer_model": "f37ec3e1e7b4be6b68145c139af15662878452ebfe869acbd61117ee88bba924",
+        "unpaged_staged_oracle": "63dbdfac8c574ed9b5c9b2346e54d7ac3b7345bff480b1192667be1ea839758b"
+      }
+    },
+    "tests/test_public_export.py": {
+      "origin": null,
+      "sha256": "58efc9186bc8a17cfe3c83ef7aa44402861c7ef6c7cb37ade5e595ab095a108c",
+      "adaptations": [
+        "New publication checks for export integrity, copied semantic modules, independent legacy helpers and isolated oracle execution.",
+        "Add subprocess regressions for optimized imports and runners, plus normal prepared-page resume."
+      ]
+    },
+    "mutations.py": {
+      "origin": null,
+      "sha256": "5f0861dec05363f99d9ca9bdadd82445ce26513d575e66225e2b38bcaf872356",
+      "adaptations": [
+        "New isolated named-mutation runner with clean controls, exact source edits and assertion-only detection."
+      ]
+    },
+    "tests/test_mutations.py": {
+      "origin": null,
+      "sha256": "d0bb52ffb4ae1fd03113cea9671f563d13719b5c4d3d8dca85bfac83832c3448",
+      "adaptations": [
+        "New mutation-tooling regressions covering stale edits, failed controls, surviving mutants, infrastructure failures and protected report destinations."
+      ]
+    }
+  },
+  "omitted": [
+    {
+      "origin": "local_reference/verify_baseline.py",
+      "reason": "The public source export does not bundle the private frozen ZIP or its local verifier."
+    },
+    {
+      "origin": "local_reference/tests/test_baseline_verification.py",
+      "test_count": 4,
+      "reason": "Tests of the local frozen ZIP/manifest lifecycle; 74 semantic/report tests are retained and public-export checks are added separately."
+    }
+  ],
+  "integrity_note": "Hashes identify this export and its frozen origin. They are not signatures or a proof of correctness. Regenerate exported hashes deliberately after reviewing source changes."
+}
