@@ -23,6 +23,8 @@ At the end of page one, the server has three facts worth passing on. The priorit
 
 Those facts travel in the **state vector**. The client sends the token back with its next request. As the scan passes #51 and #49, their entries can drop out of the vector. Nothing further down this list can match them again.
 
+Here the final scan acts as a **sweeper**: it needs no exclusions for its own output, so it only consumes and prunes the exclusions inherited from earlier stages. This applies when the final stage needs no internal duplicate suppression.
+
 ## Reserving items for a later stage
 
 Sometimes a later stage should keep its own items. Suppose the first stage scans `[A, B, C]` and has two slots, while the second stage owns a prepared shortlist `[B]`. Reserving B before the first scan makes the first stage return **A, C**, then the second returns **B**.

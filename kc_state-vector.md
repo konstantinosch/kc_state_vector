@@ -489,7 +489,8 @@ while the page is not full and a stage remains and remaining > 0:
         apply the plan's horizon transitions and safe pruning
         recheck exclusions and applicable reservations, including changes earlier in this batch
         if c is excluded: update required skip state; continue
-        serve c; resolve any reservation it owns; add coverage; update prepared lists and counters
+        serve c; resolve any reservation it owns
+        record coverage needed by remaining scans; update prepared lists and counters
         enforce the declared state-cap policy at this candidate boundary
         if exact state cannot fit: discard this tentative page; return a capacity error
     if the stage's budget is spent or (exhausted and batch wholly consumed):
@@ -518,7 +519,8 @@ return the page and, only if hasMore, its continuation token
   adaptively when many candidates are skipped. Unconsumed overfetch is re-read, or retained in a
   prepared buffer with a separate fetch cursor; it never advances the consumed cursor.
 - **The exclusions it implies:** the served item's id at its position, for the later stages that
-  can meet it again; for a grouped stage, its group (Part 2).
+  can meet it again; for a grouped stage, its group (Part 2). Remaining scans include the current
+  stage's continuation. If none can need the new coverage, no exclusion entry is required.
 - **Exhaustion:** a complete source query returning fewer than K candidates proves there are no
   more for that source under its query conditions. A timeout, partial shard response or cleaned
   prepared buffer does not. Adapters must distinguish exhaustion from interrupted work, and never
@@ -616,9 +618,27 @@ defines"). With the other form, S4 would serve r after z.
   "excl": {}, "predicates": { "labels": ["red", "blue"] } }
 ```
 
-From here on this fixture creates no more exclusions, so its live entry count stays constant.
-Counters and encoded cursor lengths may still change. A refresh starts a new chain with a new
-watermark that includes h, and h appears at the top.
+S4 creates no exclusions for its own rows. By page 5 it has drained the earlier item lists;
+S2's category predicate remains applicable. A refresh starts a new chain with a new watermark
+that includes h, and h appears at the top.
+
+### The final stage as a sweeper
+
+If the final stage needs no duplicate suppression within its own output, it acts as a **sweeper**.
+It applies inherited exclusions, selects the remaining items, and prunes entries as their covered
+sets become unreachable. Its newly selected rows need no exclusion entries: there is no later
+stage to encounter them, and its own continuation already prevents repeat selection.
+
+For a single ordered scan returning each item once, the keyset cursor provides that continuation.
+Grouped rows or overlapping merged sources may still need internal exclusions, so being last
+alone is not enough. An inherited group span also remains active until every remaining applicable
+scan has passed its covered members; meeting its first duplicate does not retire the whole span.
+
+Under the fixed-data assumptions, this sweeper only removes inherited coverage entries and adds
+none of its own. Their live count cannot increase. This does not promise that the encoded token
+shrinks on every page: counters, cursor encodings and compression can change its size. Category
+predicates remain while they can still exclude candidates, even after all item or span lists
+have drained. At chain completion, no continuation token is needed.
 
 ### Rules
 
