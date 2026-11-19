@@ -426,7 +426,7 @@ while the page is not full and a stage remains and remaining > 0:
 drop every exclusion no remaining stage can meet any more
 hasMore = a stage remains                              -- may be true even if no row will survive
 check the final token byte budget; on overflow return a capacity error, never trim at serialization
-hydrate the ids → present → deliver
+hydrate the completed selection in batches → present → deliver
 return the page and, only if hasMore, its continuation token
 ```
 
@@ -580,9 +580,14 @@ watermark that includes h, and h appears at the top.
    justified by all remaining scans passing the entry is safe pruning.
 9. **Deterministic.** The same vector, plan, request and fixed data give the same page. State
    transitions happen per candidate or selected row, not only when a token is serialized.
-10. **Selection, then hydration, then presentation.** Sources return IDs and stable sort positions,
+10. **Separate selection, hydration and presentation.** Sources return IDs and stable sort positions,
     whichever engine answers — a database or a search engine. Group membership may be supplied
     by a separate bounded metadata lookup during selection; it need not live in the scan index.
+    Prefer bulk hydration after page selection finishes: collect the complete page's IDs of
+    interest and batch the required payload reads per relation or backing service, splitting into
+    bounded chunks where necessary. This gives the payload queries a predictable batch structure
+    and avoids per-candidate reads. One hydration phase may use several queries. This is the
+    recommended default illustrated by the loops, not a required hydration schedule.
     Presentation reorders the bounded page for display and never touches cursors or exclusions.
 11. **Apply each exclusion where it is cheapest** — in memory in the page loop, as a filter on an
     ordered scan that stops at the page, or as a merge of sorted document lists in an inverted
@@ -869,7 +874,7 @@ while |page| < N and remaining > 0:
         if exact state cannot fit: discard tentative page; return a capacity error
     if exhausted and batch wholly consumed: hasMore = false; break
     adjust next batch size within the remaining candidate budget
-check token bytes; hydrate and present the selected rows
+check token bytes; hydrate the completed selection in batches and present the rows
 return page and continuation when hasMore, including after an empty page
 ```
 
@@ -1191,7 +1196,23 @@ chains restart. Format versions work the same way during rolling deploys.
 
 Access authorization is never granted by the token, but prepared IDs and exclusions were chosen
 under an earlier request's permissions. Recheck access for every delivered ID and group member.
-Revocations can shorten a page after selection; empty output still does not imply exhaustion.
+These final checks can be enforced by the bulk hydration reads before transmission; they need
+not be separate queries for each ID.
+
+Deletions or revocations can shorten a page after selection. If 50 rows are selected and only
+47 remain deliverable, the illustrated loops send those 47 with the continuation determined by
+selection. They do not restart selection to replace hydration misses. Cursors, exclusions and
+stage budgets retain their selection-based meaning; a dropped row does not refund its selection
+slot. Empty output still does not imply exhaustion.
+
+An implementation may instead try to fill the shortfall with bounded additional selection and
+hydration rounds. Refills share the request's work and deadline limits. Define whether stage
+quotas count selected or deliverable rows; refilling must not silently undo earlier exclusions
+or stage transitions. Check the final state and token limits after refilling.
+
+A failed read or an unresolved access check is not proof that an item is absent: retry or fail
+the tentative request without returning an advanced token.
+
 Current hydration data may differ from the data used for selection, so exact fixed-data guarantees
 no longer apply. Revalidation at hydration protects access; it does not create a snapshot.
 

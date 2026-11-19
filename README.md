@@ -31,7 +31,7 @@ If the row accounts for **all** items in that group that match the filters, anch
 
 ## Using the pattern
 
-Start with the order each source can actually deliver, including a stable tie-breaker such as `(sort_key, id)`. Keep the plan on the server. Carry the current stage, the position each scan has consumed, and whatever a later stage still needs from an earlier one. When the page is full, fetch the details for the selected IDs.
+Start with the order each source can actually deliver, including a stable tie-breaker such as `(sort_key, id)`. Keep the plan on the server. Carry the current stage, the position each scan has consumed, and whatever a later stage still needs from an earlier one. Prefer fetching the details for all selected IDs together after page selection finishes.
 
 A visibility watermark can keep later arrivals out of an ongoing scroll: every eligible write through it must already be committed and visible to the relevant sources. An insertion sequence alone cannot provide that guarantee. Existing rows can still change, and access is checked again on each request.
 
