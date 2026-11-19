@@ -51,6 +51,8 @@ The full document separates the mechanism from its extensions:
 
 A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern for implementation and review.
 
+Build it with `python skills/build_skill.py`. [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging; generated archives stay local.
+
 This publication provides a design, worked examples and implementation guidance, composing existing keyset or `search_after` cursors, stages or merged sources, and safely pruned overlap state. Query examples use PostgreSQL and Elasticsearch/OpenSearch. Implementations must validate correctness and performance against their own workloads.
 
 The original application demonstrated the staged-feed core. Server-held continuation, group episodes, merged sources, visibility watermarks and operational extensions are proposed generalizations. Reports of duplicates or skipped rows under the stated exact-traversal conditions are welcome, ideally with the smallest reproducing sequence of pages.

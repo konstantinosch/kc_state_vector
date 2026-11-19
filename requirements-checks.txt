@@ -1,0 +1,2 @@
+# Used only by repository checks; the portable skill and builder need no packages.
+PyYAML==6.0.3

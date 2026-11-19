@@ -1,0 +1,8 @@
+# Stable public text bytes across Windows and Unix checkouts.
+*.md text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+LICENSE text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+requirements-checks.txt text eol=lf

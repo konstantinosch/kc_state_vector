@@ -1,0 +1,17 @@
+# Generated packages and local development environments.
+/dist/
+/.runtime/
+/.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+
+# The reference implementation and benchmark research remain local.
+/local_reference/
+/mailbench/
+/tests/
+/benchmarks/
+/benchmark-results/
+/review_checks.py
+/requirements-benchmark.txt
