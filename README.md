@@ -23,6 +23,12 @@ At the end of page one, the server has three facts worth passing on. The priorit
 
 Those facts travel in the **state vector**. The client sends the token back with its next request. As the scan passes #51 and #49, their entries can drop out of the vector. Nothing further down this list can match them again.
 
+## Reserving items for a later stage
+
+Sometimes a later stage should keep its own items. Suppose the first stage scans `[A, B, C]` and has two slots, while the second stage owns a prepared shortlist `[B]`. Reserving B before the first scan makes the first stage return **A, C**, then the second returns **B**.
+
+This is a **reservation**, not evidence that B has already appeared. The plan says which stages must yield to the reservation; its owner can still select B. Once B is selected, ordinary duplicate suppression takes over. Preparing a list alone does not reserve it: without that policy, the earlier stage may take B. The full pattern explains [reservation ownership and lifetime](./kc_state-vector.md#reservations-for-a-later-stage).
+
 ## What changes for grouped results?
 
 Say an application defines groups of related items and returns one row per group. The candidate query still returns item IDs; the stage resolves group membership and decides what the row represents. If that row covers the group's matching items, another member encountered several pages later is already represented.
@@ -31,7 +37,7 @@ If the row accounts for **all** items in that group that match the filters, anch
 
 ## Using the pattern
 
-Start with the order each source can actually deliver, including a stable tie-breaker such as `(sort_key, id)`. Keep the plan on the server. Carry the current stage, the position each scan has consumed, and whatever a later stage still needs from an earlier one. Prefer fetching the details for all selected IDs together after page selection finishes.
+Start with the order each source can actually deliver, including a stable tie-breaker such as `(sort_key, id)`. Keep the plan on the server. Carry the current stage, the position each scan has consumed, and the overlap state and reservations still needed by the plan. Prefer fetching the details for all selected IDs together after page selection finishes.
 
 A visibility watermark can keep later arrivals out of an ongoing scroll: every eligible write through it must already be committed and visible to the relevant sources. An insertion sequence alone cannot provide that guarantee. Existing rows can still change, and access is checked again on each request.
 

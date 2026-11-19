@@ -83,6 +83,7 @@ covered by this description; an adapter must establish its own order and resumab
 | predicate exclusions | a pushed-down `NOT` filter that replaces anti-join state entirely |
 | budgets and counters | a `LIMIT` per child |
 | prepared lists | a complete bounded source or a refillable buffer for a later scan |
+| reservations | sets assigned to a stage that other declared consumers must leave for it; often derived from a prepared list |
 | anchor | a visibility boundary (`seq ≤ anchor`) when all eligible writes through it are already visible; it does not freeze attributes |
 | presentation | a projection after the plan, outside its state |
 
@@ -133,6 +134,8 @@ does not describe every composed result; additional state may be needed when:
 - **The data moves underneath.** Items arrive while someone is paging, and pages shift.
 - **The result is composed.** Several sources fill one list — in a fixed priority, or merged — and
   the same item can come from more than one of them.
+- **Some items belong to a later stage.** Earlier scans must leave a reserved set for its owner,
+  even though none of those items has been selected yet.
 - **The result is grouped.** One row stands for a group of items, and the group's other items
   must not come back as rows of their own further down.
 
@@ -152,6 +155,7 @@ data; the visibility and mutation conditions still apply.
 | **exclusions** | entries grouped by the stage that produced them; item identities, rolling group entries or fixed spans, used by every applicable remaining scan | safe pruning reduces live entries; a size limit needs an explicit overflow policy |
 | **predicate exclusions** | a small parameter set that excludes a whole category instead of listing its items | small by construction |
 | **prepared lists** | complete bounded sources or refillable buffers with `loaded`, offset, fetch cursor and source-exhaustion state as applicable | a declared buffer/shortlist limit; the output budget alone does not bound the candidates needed |
+| **reservation state**, when used | pending sets assigned to an owning stage, with applicability defined by the plan; derive from prepared lists where possible rather than copying IDs | a bounded shortlist or evaluable set descriptor; pending owner data must survive until resolved |
 | **counters** | `served` counts per source, wherever later stages need the number but not the identities; optional chain-wide `selectedTotal` for a count horizon | one integer each |
 | **presentation** | what display reordering needs across pages | never read by selection |
 
@@ -205,9 +209,11 @@ items. For stage `s` and vector `V`, write its excluded set as:
 
 `X_s(V) = {x : E_s(x, V) is true}`
 
-The stage considers its eligible candidates minus `X_s(V)`. Applicable exclusions from earlier
-work combine by union. The server defines their meaning and evaluators; the token carries their
-parameters, not executable predicate code.
+The stage considers its eligible candidates minus `X_s(V)`. Applicable exclusions combine by
+union: they can describe prior coverage, explicit omissions, or reservations for another stage.
+The server defines their meaning and evaluators; the token carries their parameters, not
+executable predicate code. The table below describes prior coverage and deliberate category
+omissions; reservations use a distinct ownership rule ("Reservations for a later stage", below).
 
 | Representation | Membership test | What it must justify |
 | --- | --- | --- |
@@ -222,7 +228,7 @@ items differently; each group descriptor must identify its grouping rule as well
 either explicitly or through its producing stage and bound plan version. The same key under two
 different grouping rules need not identify the same set of items.
 
-**Exclusions remember coverage; domain structure lets us encode that coverage more compactly.**
+**Duplicate exclusions remember coverage; domain structure lets us encode that coverage more compactly.**
 Many individual item IDs can sometimes be represented by one group key and two bounds.
 Tags may describe an even larger set with fewer parameters. This reduces stored state only when
 the membership test is available and affordable.
@@ -289,11 +295,11 @@ define it:
 - **Each stage covers** its source, within its window, among the items inserted at or before the
   anchor.
 - **Each stage serves** what it covers, minus identities or spans already represented under the
-  plan's exclusion and horizon rules, in order, until it runs out or its budget is spent. Whole
-  category quotas below are an explicit additional restriction.
+  plan's exclusion and horizon rules, plus applicable reservations for other stages, in order,
+  until it runs out or its budget is spent. Whole category quotas below are an additional restriction.
 - **A budget is part of the definition.** The items a stage covers beyond its budget are in the
   result only if a later stage covers them.
-- **A predicate exclusion has two forms**, and the plan states which:
+- **A predicate summarizing an earlier stage has two forms**, and the plan states which:
 
   | Form | The later stage excludes | Items the earlier stage did not reach |
   |---|---|---|
@@ -303,7 +309,8 @@ define it:
   Here `category` means the earlier stage's full stable eligibility, including source membership
   and its window, and must be reproducible in the later source. The prefix form requires the same total order and a
   retained terminal cursor. It is valid only if every matching item in that prefix was represented
-  by this or an earlier stage; it cannot summarize gaps caused by eviction or partial group service.
+  by this or an earlier stage; it cannot summarize gaps caused by eviction, partial group service
+  or pending reservations. A reserved-but-unselected item inside the prefix is not covered.
   If the stage consumed nothing, its prefix is empty. If its source was exhausted, the forms
   coincide under those conditions. A predicate need not live on the row to be correct; its cost
   determines whether it is worth using.
@@ -335,6 +342,65 @@ buffer entries to fit the token. Preparation and refill reads need their own wor
 Alternatively, define a fixed shortlist as the stage's entire source, or overfetch by a proven
 bound on earlier overlap. State that choice. The worked S3 trace uses its entire four-item source,
 so no refill is needed; its `loaded` flag and offset are sufficient.
+
+### Reservations for a later stage
+
+**A reservation means "leave this set for its owning stage", not "this set has already been
+served".** Preparation alone does not confer ownership: in the example above, an earlier stage
+may take A from a prepared list. A plan can instead reserve a later stage's items before an
+earlier overlapping scan starts. The exclusion test then applies to the stages that must yield,
+while the owner ignores its own reservation and still checks ordinary duplicate exclusions.
+IDs, group descriptors and predicates can describe either kind of set; the plan distinguishes
+pending ownership from prior coverage even when their membership tests have the same shape.
+
+For example, S1 scans `[A, B, C]` in that order with budget 2. S2's complete prepared source is
+`[B]`, with budget 1. The plan reserves B for S2 before S1 starts:
+
+| Page, with size 2 | Selected rows | What happens |
+|---|---|---|
+| 1 | A, C | S1 selects A, skips reserved B, and selects C. B remains pending for S2. |
+| 2 | B | S2 selects its reserved item and the plan finishes. |
+
+The canonical selection is `[A, C, B]`, regardless of page boundaries. Without reservation,
+ordinary earlier-stage priority would produce `[A, B]`; S2 would find B already represented.
+Only identities, positions and any required grouping metadata are prepared here. Payload
+hydration remains a separate concern.
+
+The bound plan declares the owner, the stages that yield, the reserved set and its lifecycle:
+
+- **Establish the set before it can be taken.** A simple implementation freezes a bounded,
+  deterministic shortlist before the first affected scan. Its existing prepared list and offset
+  can supply the reservation state; no duplicate list or mandatory new token field is needed.
+  A stable, evaluable predicate can reserve a category instead. The same scope, anchor and
+  visibility requirements apply. Loading only part of a source reserves only those known items,
+  unless a separate predicate describes the full reserved set.
+- **Resolve ownership consistently.** If reserved sets overlap, assign the overlap by a
+  deterministic plan rule before affected scans run. Two owners must not suppress each other's
+  claims indefinitely. Other predicates must respect that assignment too: an earlier stage's
+  whole-category exclusion must not accidentally hide the owner's reserved rows. Carve out the
+  reserved set or resolve the conflicting policies before scanning. With grouped rows, ownership
+  must account for the represented members:
+  excluding one candidate ID alone does not stop a different candidate from selecting a group
+  containing it. Apply the plan's partial-group policy where needed.
+- **Reservation is not selection.** Creating one does not increment `served` or `selectedTotal`,
+  start a selected-row horizon, or advance the owner's consumed cursor. When the owner selects
+  a row, resolve that reservation and record the ordinary coverage needed by remaining scans.
+  If the owner encounters a pending item already covered elsewhere, resolve it as covered without
+  selecting it again. The owning stage ignores its own reservation, not prior coverage.
+- **Retain pending work.** An earlier cursor passing B does not make S2's pending B disposable.
+  Keep the prepared entry, or enough state to reproduce it exactly, until the owner resolves it.
+  A reservation's lifetime follows ownership; ordinary coverage pruning applies after selection.
+  Skipping reserved items also leaves holes in a scan's represented prefix: its terminal cursor
+  alone cannot justify suppressing those items in the owning stage.
+- **Account for items the owner will not serve.** Prefer a shortlist that fits its remaining
+  selection budget. Reserving a whole category but serving only its first K rows intentionally
+  omits the rest unless the plan provides a fallback. Cancellation or release cannot recover items
+  behind an already advanced cursor; preserving them requires a remaining source or carried work
+  that can still serve them. Declare that policy instead of silently dropping pending reservations.
+
+Reservation preparation and retained state have their own work and size limits. Their membership,
+ownership and transitions must not depend on page size or batch boundaries. Live deletions and
+access changes still have the limitations described in Part 4.
 
 ### Choosing the values — from the data
 
@@ -375,6 +441,8 @@ needs the reason for completion, also retain whether the source was exhausted or
 `excl.S1` means **produced by S1**, not checked only by S1. The server plan determines the consumers.
 A consumer may omit passed entries from its query, but the token retains an entry until no
 remaining applicable consumer can match it. Unstarted later stages count as remaining consumers.
+Reservations, when declared, have separate pending-ownership semantics. They may be derived from
+`prepared` without adding them to `excl` as if those items had already been selected.
 
 Entry types are explicit; `position` is always `[sortKey, id]`:
 
@@ -407,8 +475,11 @@ validate the vector (signature, version, then every field)
 work on a tentative copy; remaining = the positive request candidate budget
 while the page is not full and a stage remains and remaining > 0:
     want = min(room left on the page, the stage's budget left)
-    if want = 0: mark the stage done; move to the next stage; continue
-    entering a stage: prepare its complete source or refillable buffer as declared
+    if want = 0:
+        resolve the stage's pending reservations under its declared completion/fallback policy
+        mark the stage done; move to the next stage; continue
+    ensure reservations affecting this scan are established; reuse any already prepared state
+    entering a stage: prepare its source if not loaded, or refill its buffer as declared
     K = min(chosen batch size, remaining)
     batch, exhausted = source below its consumed cursor, within the anchor and scope,
                        with equivalent pushed-down exclusions, in order, LIMIT K
@@ -416,12 +487,13 @@ while the page is not full and a stage remains and remaining > 0:
         if the page is full or the stage's budget is spent or remaining = 0: stop
         the stage's cursor = c; remaining -= 1                 -- served or skipped
         apply the plan's horizon transitions and safe pruning
-        recheck current in-memory exclusions, including entries created earlier in this batch
+        recheck exclusions and applicable reservations, including changes earlier in this batch
         if c is excluded: update required skip state; continue
-        serve c; add the exclusions it implies; update prepared lists and counters
+        serve c; resolve any reservation it owns; add coverage; update prepared lists and counters
         enforce the declared state-cap policy at this candidate boundary
         if exact state cannot fit: discard this tentative page; return a capacity error
     if the stage's budget is spent or (exhausted and batch wholly consumed):
+        resolve the stage's pending reservations under its declared completion/fallback policy
         mark the stage done; retain any terminal cursor still needed; move to the next stage
 drop every exclusion no remaining stage can meet any more
 hasMore = a stage remains                              -- may be true even if no row will survive
@@ -469,7 +541,8 @@ return the page and, only if hasMore, its continuation token
 ### How it evolves — four stages over five pages
 
 A list served from four sources in a fixed order, page size 4. Items are shown as
-`sortKey·id`, newest first.
+`sortKey·id`, newest first. This trace uses ordinary preparation without reservation: S2 may take
+an item from S3's prepared list before S3 runs.
 
 | Source | Budget | Contents at the anchor | Role |
 |---|---|---|---|
@@ -1106,6 +1179,8 @@ exclusions prevent cross-stage duplicates. What it asks of the mechanism:
   ends a stage. A request work limit only pauses it.
 - **Prepared lists:** a complete bounded source can be prepared early and cleaned as earlier
   stages serve. A partial buffer must refill; preparation moves work earlier rather than removing it.
+- **Reservations:** optionally assign a prepared set to a later stage before earlier scans can
+  take it; the plan distinguishes pending ownership from already selected coverage.
 - **Predicate exclusion:** use either an intentional whole-category quota or a proven consumed
   prefix, as defined in Part 1.
 - **Both engines, one shape:** adapters can return `(sort key, id)` in a compatible order,
@@ -1303,6 +1378,9 @@ request. Bind the full relevant access state, not just partitions if item-level 
   post-watermark arrivals with old sort keys, late visibility below a raw sequence, and multiple
   disjoint spans for a group. Test declared count horizons and approximate eviction against their
   own policies, including finite-budget displacement, rather than an exact unlimited-seen oracle.
+- **Reservations:** test an earlier scan passing pending items, owner access to its own set,
+  overlapping owners, insufficient owner budgets, release after a cursor has passed, and prefix
+  predicates with reserved holes. Vary page and batch sizes without changing ownership or results.
 - **Mutation tests:** deletions, sort-key changes and access changes must obey the stated live-data
   limits and never bypass current authorization. These are distinct from fixed-data exactness.
 - **Protocol and adapter tests:** forged, expired, oversized and wrong-plan tokens; schema edge
