@@ -1,10 +1,10 @@
 ---
 name: kc-state-vector
-description: Design, implement, or review state-vector pagination for overlapping ordered sources, staged feeds, reservations, or grouped results. Use when continuation needs overlap state beyond a simple cursor.
+description: Design, implement or review pagination for duplicate/missing rows in pinned/priority feeds, merged sources/indexes or one row per group/thread when continuation needs more than a keyset cursor.
 license: MIT
 metadata:
   author: Konstantinos Chantzis
-  version: "0.1.1"
+  version: "0.1.2"
 ---
 
 # State-vector pagination
@@ -15,13 +15,42 @@ remaining scans, then retires that coverage only when safe. Client-held and
 server-held state are implementation choices; only the client-held variant avoids
 an application pagination session store.
 
+## Check whether ordinary keyset pagination is enough
+
+If one ordered, ungrouped source with no composition meets the requirement, use an
+ordinary keyset cursor. Moving sort keys, changing relevance, totals and random
+page access may need another mechanism. Do not introduce optional capabilities
+merely because the reference describes them.
+
+Consider the pattern for duplicate or missing rows across pages, pinned or priority
+items followed by the rest, merging overlapping sources or indexes into one list,
+or one row per group or thread. Confirm that continuation needs cross-source or
+group coverage; these symptoms alone do not establish that. A stable group-head
+query or an already deduplicated ordered source may still need only a keyset cursor.
+
+For a small example, fix eligibility and descending ID order, with sufficient work
+budgets. The priority source has #51, #49 and #48 but only two selection slots;
+the remaining source has #52 through #48. With page size three:
+
+| Page | Selected IDs | Continuation |
+| --- | --- | --- |
+| 1 | #51, #49, #52 | Priority is complete; remaining cursor is #52; retain exclusions for #51 and #49. |
+| 2 | #50, #48 | The remaining scan skips #51 and #49; #48 was never selected and stays eligible. |
+
+Decide whether to skip each duplicate before retiring its exclusion, and retire it
+only when no remaining scan can encounter it. Excluding the whole priority category
+would incorrectly lose #48. This example needs no optional capabilities.
+
 Use the [bundled pattern](references/kc-state-vector.md) as the technical reference.
 Start with [the small core](references/kc-state-vector.md#part-1--the-small-core), then
 use [the reference model](references/kc-state-vector.md#part-2--reference-model),
 including **Rules**, for the shared contracts. Read selected capabilities in Part 3
 and relevant integration details in Part 4. Fields for unused capabilities are not
-required. Locate sections by their Markdown headings when your file reader does not
-follow fragment links. The package is self-contained and requires no particular
+required. With a file reader, locate the relevant Markdown headings and read each
+chosen section through the next heading of equal or higher level, including its
+subsections and any linked contract it depends on. Do not load the entire reference
+by default. Fragment links or heading search are navigation aids, not requirements
+for a particular tool. The package is self-contained and requires no particular
 model, tool API, database or runtime.
 
 ## Establish the result before choosing machinery
@@ -47,11 +76,6 @@ Determine the facts that affect correctness:
 Infer these from evidence where possible. State unresolved assumptions and ask only
 for missing decisions that change the result or prevent safe progress. Do not turn
 a worked example's engine, page size, horizon or index into a universal default.
-
-If one ordered, ungrouped source with no composition meets the requirement, use an
-ordinary keyset cursor. Moving sort keys, changing relevance, totals and random
-page access may need another mechanism. Do not introduce optional capabilities
-merely because the reference describes them.
 
 ## Design or check the continuation
 
