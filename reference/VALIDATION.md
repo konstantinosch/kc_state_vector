@@ -1,4 +1,4 @@
-# Validation scope and evidence
+# Core validation scope and evidence
 
 The [executable reference](README.md) checks exact selection over fixed, finite
 synthetic sources. It is a specification aid for a supported subset of the
@@ -60,9 +60,10 @@ against existing semantic regressions in fresh copies. It deliberately excludes
 provenance-hash tests: noticing that a file changed is not evidence that a semantic
 bug was detected.
 
-The mutation runner defines its own exact variants. It does not claim to reproduce
-another reviewer's unavailable search/replace patches, or to exercise the grouped
-and ownership extensions. A surviving valid mutant fails the command. A stale or
+The core mutation runner defines its own exact variants. It does not claim to reproduce
+another reviewer's unavailable search/replace patches, or to exercise grouped
+coverage. The [grouped module](grouped/VALIDATION.md) has separate mutation checks.
+A surviving valid mutant fails the command. A stale or
 ambiguous edit, syntax error, test error or timeout is a tooling failure, not a kill.
 Healthy controls must pass before mutation results can count.
 
@@ -79,7 +80,9 @@ semantic/report tests, four packaging checks and seven mutation-tooling tests.
 The healthy mutation control passed and all eight named mutants were detected.
 All four CLI examples matched the oracle; a limited 20-configuration-per-family
 enumeration smoke run also passed. This was not a rerun of the full enumeration.
-Hosted Linux/Windows CI results remain pending the first repository run.
+The initial core export subsequently passed its documentation and Linux/Windows
+reference jobs in [GitHub CI](https://github.com/konstantinosch/kc_state_vector/actions/runs/44636233600).
+That run validates the core export, not the later grouped additions.
 
 The optimized-execution safeguard adds three subprocess regressions to that suite:
 imports fail before loading the model, CLI/validation runners reject optimization,
@@ -94,9 +97,11 @@ Read generated reports alongside their source hashes, configuration and executio
 profile limits. Test success cannot establish correctness of a separately written
 adapter unless that adapter is checked against the same contracts.
 
-## Outside this validation
+## Outside this core validation
 
-- Grouped rows, spans/hybrids, group episodes and predicate-compressed ownership.
+- Grouped rows and spans/hybrids have their own [validation scope](grouped/VALIDATION.md);
+  their tests do not establish composition with the core's prepared buffers.
+- Predicate-compressed ownership and inferred group episodes remain separate work.
 - Dynamic horizons, changing records/order/eligibility and real engine consistency.
 - Query latency, throughput, index-only execution, bounded lookup cost and working RAM.
 - Authenticated transport, current permissions, hydration and delivery guarantees.

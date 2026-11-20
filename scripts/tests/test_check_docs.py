@@ -38,6 +38,8 @@ class CheckDocsTests(unittest.TestCase):
         self.write("skills/kc-state-vector/LICENSE", (self.root / "LICENSE").read_text())
         self.write("reference/README.md", "# Executable reference\n\n[Scope](VALIDATION.md#scope)\n")
         self.write("reference/VALIDATION.md", "# Validation\n\n## Scope\n\nFixed finite inputs.\n")
+        self.write("reference/grouped/README.md", "# Grouped reference\n\n[Scope](VALIDATION.md#scope)\n")
+        self.write("reference/grouped/VALIDATION.md", "# Grouped validation\n\n## Scope\n\nFixed group membership.\n")
         for relative in REFERENCE_SOURCE_FILES:
             self.write(relative, "# Public reference fixture\n")
 
@@ -158,7 +160,8 @@ class CheckDocsTests(unittest.TestCase):
 
     def test_missing_public_reference_inputs_are_rejected(self):
         for relative in ("reference/VALIDATION.md", "reference/oracle.py",
-                         "reference/tests/test_reference.py"):
+                         "reference/tests/test_reference.py", "reference/grouped/VALIDATION.md",
+                         "reference/grouped/oracle.py", "reference/grouped/tests/test_public_boundaries.py"):
             with self.subTest(relative=relative):
                 path = self.root / relative
                 original = path.read_bytes()
@@ -173,6 +176,19 @@ class CheckDocsTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.write(relative, "Unpublished fixture\n")
                 self.write("reference/README.md", f"# Reference\n\n[Extra]({target})\n")
+                self.assert_rejected(mentions="non-public")
+
+    def test_grouped_links_resolve_without_private_experiments(self):
+        self.write("reference/README.md", "# Reference\n\n[Grouped](grouped/README.md)\n")
+        self.write("reference/grouped/README.md", "# Grouped reference\n\n"
+                   "[Core](../README.md)\n[Scope](VALIDATION.md#scope)\n"
+                   "[Oracle](oracle.py)\n[Fixtures](scenarios.py)\n"
+                   "[Tests](tests/test_public_boundaries.py)\n")
+        self.assertEqual([], check_repository(self.root, build=False))
+        for target in ("../../local_reference/grouped_extension/model.py",
+                       "../results/grouped/comparison.json", "ownership_extension/pager.py"):
+            with self.subTest(target=target):
+                self.write("reference/grouped/README.md", f"# Grouped reference\n\n[Extra]({target})\n")
                 self.assert_rejected(mentions="non-public")
 
     def test_build_uses_only_public_inputs_and_leaves_sources_unchanged(self):

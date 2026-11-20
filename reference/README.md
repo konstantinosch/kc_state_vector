@@ -91,10 +91,14 @@ a new semantic baseline. Its public initializer adds the optimized-execution gua
 the model and oracle retain their original bytes. The public package includes its
 test helpers and runs without the original workspace or benchmark files.
 
-Grouped results, spans/hybrid encodings, compressed reservations, dynamic horizons,
-live data, hydration, real source adapters and server-held revision protocols are
-outside this implementation. Their discussion in the pattern does not imply they
-are implemented or validated here. The separate local experiments and engine
-benchmarks are not part of this package.
+The optional [grouped coverage module](grouped/README.md) separately checks grouped
+rows, fixed spans and hybrid coverage with explicit-ID reservations. It has its
+own oracle, fixtures and [validation scope](grouped/VALIDATION.md). Its raw-source
+model does not combine grouping with the prepared buffers validated by this core.
+
+Compressed reservations, dynamic horizons, live data, hydration, real source
+adapters and server-held revision protocols remain outside these implementations.
+Their discussion in the pattern does not imply validation here. Engine benchmarks
+and the remaining local experiments are not part of this package.
 
 This code is covered by the repository's [MIT license](../LICENSE).

@@ -33,10 +33,11 @@ PACKAGE = "skills/kc-state-vector"
 SKILL_MARKDOWN_FILES = ("README.md", "kc-state-vector.md", f"{PACKAGE}/SKILL.md",
                         f"{PACKAGE}/references/kc-state-vector.md")
 SKILL_BUILD_FILES = (*SKILL_MARKDOWN_FILES, "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
-REFERENCE_MARKDOWN_FILES = ("reference/README.md", "reference/VALIDATION.md")
+REFERENCE_MARKDOWN_FILES = ("reference/README.md", "reference/VALIDATION.md",
+                            "reference/grouped/README.md", "reference/grouped/VALIDATION.md")
 # Deliberate publication boundary: never discover files recursively from the local
 # workspace or allow an arbitrary file merely because it sits under reference/.
-REFERENCE_SOURCE_FILES = tuple(f"reference/{name}" for name in (
+CORE_REFERENCE_SOURCE_FILES = tuple(f"reference/{name}" for name in (
     "__init__.py", "__main__.py", "model.py", "oracle.py", "retirement.py",
     "capacity_checks.py", "failure_checks.py", "closing.py", "long_scenarios.py",
     "long_traversals.py", "tiny_plans.py", "tiny_checker.py", "exhaustive.py",
@@ -47,6 +48,17 @@ REFERENCE_SOURCE_FILES = tuple(f"reference/{name}" for name in (
     "tests/test_retirement.py", "tests/test_tiny_checker.py", "tests/test_tiny_plans.py",
     "tests/test_public_export.py", "tests/test_mutations.py",
 ))
+GROUPED_REFERENCE_SOURCE_FILES = tuple(f"reference/grouped/{name}" for name in (
+    "__init__.py", "__main__.py", "audit.py", "coverage.py", "generated.py",
+    "hybrid_scenarios.py", "model.py", "mutations.py", "oracle.py", "reporting.py",
+    "run_checks.py", "run_hybrid_checks.py", "scenarios.py", "provenance.json",
+    "tests/__init__.py", "tests/test_audit.py", "tests/test_contract.py",
+    "tests/test_coverage.py", "tests/test_hybrid_audit.py", "tests/test_hybrid_coverage.py",
+    "tests/test_hybrid_pager.py", "tests/test_pager.py", "tests/test_reporting.py",
+    "tests/test_scenarios.py", "tests/test_public_export.py", "tests/test_mutations.py",
+    "tests/test_public_boundaries.py",
+))
+REFERENCE_SOURCE_FILES = (*CORE_REFERENCE_SOURCE_FILES, *GROUPED_REFERENCE_SOURCE_FILES)
 MARKDOWN_FILES = (*SKILL_MARKDOWN_FILES, *REFERENCE_MARKDOWN_FILES)
 PUBLIC_FILES = (*SKILL_BUILD_FILES, *REFERENCE_MARKDOWN_FILES, *REFERENCE_SOURCE_FILES)
 PUBLIC_SUPPORT_FILES = (".gitignore", ".gitattributes", "requirements-checks.txt",
