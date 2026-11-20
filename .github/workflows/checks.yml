@@ -22,7 +22,7 @@ jobs:
       - name: Install checker dependencies
         run: python -m pip install -r requirements-checks.txt
       - name: Test checker failure cases
-        run: python -m unittest discover -s scripts/tests -v
+        run: python -m unittest scripts.tests.test_check_docs -v
       - name: Check public docs and reproducible skill package
         run: python scripts/check_docs.py
 
@@ -87,3 +87,25 @@ jobs:
         run: python -S -m reference.placement.mutations
       - name: Compare all three contracts on matching inputs
         run: python -S -m reference.placement.comparison --suite smoke
+
+  skill-self-check:
+    name: Skill self-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Test the standalone oracle, adapters and checker
+        run: python -S -m unittest scripts.tests.test_skill_oracle scripts.tests.test_skill_self_check -v
+      - name: Check the three deliberately broken sample pagers
+        run: python -S skills/kc-state-vector/scripts/mutations.py
+      - name: Exercise the complete sample adapter
+        run: python -S skills/kc-state-vector/scripts/check_pager.py --adapter skills/kc-state-vector/scripts/sample_pager.py --max-page-size 2
