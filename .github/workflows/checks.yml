@@ -65,3 +65,25 @@ jobs:
         run: python -S -m unittest discover -s reference/grouped/tests -t . -v
       - name: Check deliberately broken grouped implementations
         run: python -S -m reference.grouped.mutations
+
+  placement:
+    name: Placement contracts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Run standalone placement tests
+        run: python -S -m unittest discover -s reference/placement/tests -t . -v
+      - name: Check deliberately broken placement implementations
+        run: python -S -m reference.placement.mutations
+      - name: Compare all three contracts on matching inputs
+        run: python -S -m reference.placement.comparison --suite smoke
