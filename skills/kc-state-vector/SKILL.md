@@ -4,7 +4,7 @@ description: Design, implement or review pagination for duplicate/missing rows i
 license: MIT
 metadata:
   author: Konstantinos Chantzis
-  version: "0.1.2"
+  version: "0.1.3"
 ---
 
 # State-vector pagination
@@ -153,7 +153,7 @@ read or authorization result is not an absent item.
 Presentation order must not change selection cursors or coverage.
 
 For client-held state, validate its binding, integrity, schema, versions and bounds;
-account for final encoded size. For server-held state, define progress identity,
+account for final encoded size. For server-held or hybrid state, define progress identity,
 concurrency, response-loss retries (including the terminal page), retention and
 missing-state behavior. The reference's mutable, single-chain protocol uses atomic
 revision advancement and retained replay outcomes. If older vectors are retained or
@@ -163,6 +163,11 @@ access, and neither storage location creates a snapshot. Follow the selected pro
 when accepting progress after hydration and other failures; do not invent a silent
 restart or pretend a replay is new progress.
 
+For hybrid placement, start with the reference's one-way inline-or-spill default.
+Choose [two-way return or recomputation](references/kc-state-vector.md#optional-return-to-inline-and-recomputation)
+only with their full transition and replay contracts. Returning inline keeps a
+server-side revision head; digest-verified recomputation requires repeatable selection.
+
 Claim exact traversal only under the reference's fixed-data, fixed-eligibility,
 stable-order and sufficient-state conditions. A visibility watermark requires all
 eligible writes through it to be committed and visible to every relevant source;
@@ -171,8 +176,9 @@ actual live-data limitations when these conditions cannot be met.
 
 Consult [Part 4 - Integration and reference](references/kc-state-vector.md#part-4--integration-and-reference)
 for the selected storage protocol, access/hydration, capacity, source-query and
-operating details. The staged-feed core has implementation provenance; several
-extensions are proposed generalizations, not production guarantees.
+operating details. The executable references check bounded fixed-data core, grouped
+and placement contracts. Dynamic horizons, including D1, remain proposed/local;
+reference checks do not establish production adapter or storage guarantees.
 
 ## Validate the supported plan and report the result
 

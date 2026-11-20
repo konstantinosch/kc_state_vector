@@ -2,18 +2,36 @@
 
 A design pattern for paging through ordered results composed from several sources or grouped
 into rows. **The core is the state vector and the rules that select results, advance the vector
-and retire state safely.** The vector can travel with the client, remain on the server, or move
-from inline to server-held storage under a declared hybrid protocol. Stateless application
+and retire state safely.** The vector can travel with the client, remain on the server, or switch
+between them under a declared hybrid protocol. Stateless application
 pagination is the fully client-held version.
 
 Sources return `(sort key, id)` positions in a stable total order; grouping keys can be resolved
 separately from those IDs. The mechanism composes keyset scans, overlap tracking and explicit
 continuation state; it does not introduce a new pagination primitive.
 
-This is a design document, developed from a staged-feed implementation. Group episodes, merged
-sources, the server-held protocol and the operational extensions below are proposed generalizations.
-The publication provides the mechanism, worked examples and implementation requirements. Implementers must
-validate the supported plans against their own source adapters and workloads.
+The original application demonstrated the staged-feed core. The
+[executable references](#possible-implementation) now check fixed-data core/reservation,
+grouped-coverage and placement contracts on synthetic inputs. Those checks are narrower than this
+document: production adapters, live-data consistency and operational costs still need validation.
+Dynamic count horizons, including D1, remain proposed and explored only in local experiments.
+
+### When not to use it
+
+- One ordered, ungrouped source without composition, an already deduplicated view, or stable
+  group heads with no remaining member coverage usually need only a keyset cursor. A small list
+  may fit in one request.
+- Changing relevance or sort keys need a stable source view for exact traversal. Corpus changes
+  can reorder search results even below an arrival anchor; use a suitable engine snapshot,
+  versioned reads or a materialized result rather than expecting the vector to freeze them.
+- Exact totals and direct page access need separate counting or navigation mechanisms.
+- Required overlap state can grow beyond a token or memory budget. Exact mode must retain it,
+  use a declared storage alternative, or fail; arbitrary eviction can repeat rows and displace
+  distinct results under finite quotas.
+
+The [selection guarantees](#scope-and-guarantees) assume fixed eligibility and order, reliable
+source responses and consistent identity. Candidate limits bound application work, not hidden
+engine scans, grouping lookups or hydration. A token or handle grants no access rights.
 
 ### How to read this document
 
@@ -28,10 +46,8 @@ this document; they are not a checklist of features every implementation must su
 | [Part 3 — Optional capabilities](#part-3--optional-capabilities) | prepared sources, reservations, grouping, horizons and examples of composed or merged results |
 | [Part 4 — Integration and reference](#part-4--integration-and-reference) | storage choices, hydration, failure handling, engine guidance, optimization, testing and operations |
 
-Authorization, stable ordering, reliable exhaustion and honest state limits are correctness
-requirements. Part 1 states the baseline; [Rules](#rules) consolidates the contracts near the
-start of Part 2. Part 4 supplies their implementation details. Fields and transitions for
-an unused capability are not required.
+[Rules](#rules) states the shared contracts; Part 4 supplies their integration details.
+Fields and transitions for unused capabilities are not required.
 
 ---
 
@@ -49,7 +65,6 @@ changes that state, including exclusions, reservations and safe pruning.
 A client walks a long, ordered result one page at a time — a **chain** of requests. A single cursor
 does not describe every composed result; additional state may be needed when:
 
-- **The data moves underneath.** Items arrive while someone is paging, and pages shift.
 - **The result is composed.** Several sources fill one list — in a fixed priority, or merged — and
   the same item can come from more than one of them.
 - **Some items belong to a later stage.** Earlier scans must leave a reserved set for its owner,
@@ -57,9 +72,8 @@ does not describe every composed result; additional state may be needed when:
 - **The result is grouped.** One row stands for a group of items, and the group's other items
   must not come back as rows of their own further down.
 
-The vector makes that continuation state explicit. It can be retained in an application session
-or carried with each request. Neither location alone establishes a consistent view of changing
-data; the visibility and mutation conditions still apply.
+The vector makes that continuation state explicit. Arrivals can also move page boundaries,
+but preserving a consistent source view requires the conditions below, regardless of placement.
 
 ### The smallest useful version
 
@@ -142,52 +156,23 @@ with hooks for the selected capabilities.
 
 ### Scope and guarantees
 
-An exact traversal requires fixed eligibility and sort positions, consistent identities across
-sources, and all necessary overlap state retained until it is safe to forget. A completed chain
-then follows the result defined by its plan, in canonical selection order. This is a guarantee
-about selection along a valid continuation chain, not exactly-once network delivery. Presentation
-may reorder each page afterwards. Neither storage placement creates a snapshot.
+A completed valid chain selects the result defined by its plan in canonical order. This is a
+selection guarantee, not exactly-once receipt or display; presentation may reorder each page.
+The conditions below apply to the small core and every selected extension.
 
-To exclude arrivals reliably, the anchor must be a **visibility watermark**: every eligible write
-through that boundary is already committed and visible to the relevant sources. A sequence
-allocated at insertion, a timestamp, or a settling delay alone does not establish that condition.
-An anchor also does not freeze later edits, deletions or access changes.
+| Property | Conditions and limits |
+|---|---|
+| Exact selection | Fixed data, eligibility and sort positions; consistent identities; complete source responses and necessary coverage retained until safe retirement. A grouped row represents its declared group or episode; count horizons may intentionally allow recurrence. |
+| Arrival stability | Every eligible write through a visibility watermark is committed and visible to the relevant sources. An allocated sequence, timestamp or settling delay alone is insufficient; older uncommitted writes can appear later. A refresh starts a new chain. |
+| Deterministic continuation | The same vector, plan, result-affecting request parameters and fixed data give the same selected page. Page size changes boundaries, not concatenated selection; cap and horizon transitions cannot depend on serialization boundaries. |
+| Live-data behavior | An anchor does not freeze edits, deletions, membership or access changes; these can cause omissions or repeats. Freeze reader-specific selection parameters at the first request and recheck current access, including at hydration. Stronger consistency needs a stable source view. |
+| State and failures | Size depends on overlap still reachable by remaining consumers, not just page size. Exact mode fails if required state cannot fit the chosen storage contract. Approximate eviction and declared horizons change the result under their respective policies; see [The cap](#the-cap). |
+| Binding and placement | Authenticate and validate the vector's reader, scope and plan before querying. Only the fully client-held variant avoids an application session store; server-held and spilled chains need revision/replay coordination. Both forms need expiry and versioning; neither creates a snapshot or grants authorization. |
+| Incremental work | Keyset scans resume after consumed positions, including skips. The page loop bounds its candidates; engine filtering, metadata, preparation and hydration have separate [costs](#cost). |
 
-State size depends on overlapping items and groups still reachable by remaining scans, not just
-the page size. Exact mode stops with an explicit capacity error if required state cannot fit;
-continuing by evicting required exclusions is an approximate policy. Repeats can then consume
-finite stage budgets and displace distinct results. Time or count horizons deliberately defined
-by the plan are separate result semantics, not an invisible storage optimization.
-
-Use this for forward traversal with stable sort keys. Relevance rankings that change, random page
-access and exact totals need other mechanisms. A single ungrouped source usually needs only an
-ordinary keyset cursor. See [When not to use it](#when-not-to-use-it) and [The cap](#the-cap).
-
-**The intended properties, with their conditions:**
-
-- **State placement is explicit.** The client-held version needs no application session store:
-  a compatible server reconstructs the vector from a valid token. The server-held version needs
-  retained state and a retry/coordination contract. Both have expiry and versioning requirements.
-- **Incremental selection.** A keyset scan resumes at its consumed position rather than using
-  an offset. The page loop can bound candidates it consumes, but filters pushed into the engine,
-  metadata queries, preparation and hydration have separate costs ("Cost", below).
-- **Exact result while the assumptions hold.** With fixed data and eligibility, complete source
-  visibility through the anchor, deterministic plan transitions and necessary exclusions retained,
-  each result row defined by the plan is selected once. A grouped row represents its declared
-  group or episode; a count horizon may intentionally allow a later row for the same group.
-- **Stable against later arrivals.** A valid visibility watermark excludes subsequent arrivals.
-  A raw insertion sequence only excludes larger sequence values; an older uncommitted write can
-  still become visible later. A refresh starts a new chain.
-- **Deterministic continuation.** The same vector, plan, request page size and data give the same
-  selected page. With fixed result semantics, changing page size changes page boundaries, not the
-  concatenated selection. Cap and horizon transitions must not depend on serialization boundaries.
-- **Live data remains live.** Sort-key, attribute, membership and permission changes can cause
-  omissions or repeats. Stronger consistency needs versioned reads, a materialized result or an
-  engine snapshot. Freeze reader-specific selection parameters at the first page; recheck actual
-  access on every request and at hydration.
-- **Authenticated and validated state.** Verify the continuation's binding to the authenticated
-  reader, scope and plan, then validate the vector before querying. Client-held state also needs
-  integrity protection. Neither a token nor a server-held handle grants permission to read an item.
+The [core page loop](#the-core-page-loop) defines tentative progress, incomplete-read failure
+and empty pages with continuation. The [rules](#rules) and selected protocol make those
+requirements precise for the full plan.
 
 ### The final stage as a sweeper
 
@@ -207,17 +192,7 @@ shrinks on every page: counters, cursor encodings and compression can change its
 predicates remain while they can still exclude candidates, even after all item or span lists
 have drained. At chain completion, no continuation token is needed.
 
-### When not to use it
 
-- **Results ordered by relevance.** A search engine's scores use statistics over the whole corpus,
-  which change as documents arrive, so the order moves even below the anchor. Use the engine's
-  point-in-time snapshot there.
-- **Sort keys that change often** — a "last activity" order where every change moves the item.
-  The declared exception becomes the common case.
-- **Totals and random access** ("page 37 of 120"): the pattern pages forward only.
-- **Small lists** that fit in one request.
-- **One ordered source, with no grouping and no composition:** plain keyset pagination is the
-  same thing with less machinery.
 
 ---
 
@@ -322,10 +297,8 @@ covered by this description; an adapter must establish its own order and resumab
 
 ### What the vector carries
 
-This is the full field inventory. The
-[smallest useful version](#the-smallest-useful-version) needs only the state for its chosen
-operators; prepared lists, reservation state, grouping entries and presentation state are not
-mandatory for every plan.
+The full inventory follows; the [small core](#the-smallest-useful-version) uses only its
+selected operators' fields.
 
 | Part | What it is | Bound |
 |---|---|---|
@@ -343,8 +316,7 @@ mandatory for every plan.
 
 ### What each stage declares
 
-This is the expanded stage contract. For the small core, grouping is the item itself and no
-group horizon is needed; additional parameters describe the capabilities selected by the plan.
+For the small core, grouping is the item itself and no group horizon is needed.
 
 The server's plan names its stages in order, and each stage declares four parameters. These
 belong to the plan, like the order of the stages (rule 4); the continuation is bound to that plan
@@ -740,30 +712,16 @@ that includes h, and h appears at the top.
 
 ### Deterministic ordered stages
 
-One list served from sources in a fixed priority, each source exhausted or its budget spent
-before the next. The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) has this shape. Under the exact-mode assumptions, retained
-exclusions prevent cross-stage duplicates.
+The [four-stage trace](#how-it-evolves--four-stages-over-five-pages) serves sources in fixed
+priority, ending each on proven exhaustion or a spent selection quota. A request work limit
+only pauses it. Optional [prepared sources](#prepared-sources-and-refill) move work earlier,
+[reservations](#reservations-for-a-later-stage) assign future ownership, and
+[whole-category quotas or proven prefixes](#the-result-a-plan-defines) permit predicate exclusions.
+The same ordering, visibility and validation contracts apply to database and search adapters;
+grouping metadata may be resolved separately.
 
-Prepared sources, reservations and predicate compression below apply only when selected
-by the plan; ordinary ordered stages need none of those capabilities.
-
-What it asks of the mechanism:
-
-- **Stages:** one page filled across sources in order; proven exhaustion or a spent output budget
-  ends a stage. A request work limit only pauses it.
-- **Prepared lists:** a complete bounded source can be prepared early and cleaned as earlier
-  stages serve. A partial buffer must refill; preparation moves work earlier rather than removing it.
-- **Reservations:** optionally assign a prepared set to a later stage before earlier scans can
-  take it; the plan distinguishes pending ownership from already selected coverage.
-- **Predicate exclusion:** use either an intentional whole-category quota or a proven consumed
-  prefix, as defined in [The result a plan defines](#the-result-a-plan-defines).
-- **Both engines, one shape:** adapters can return `(sort key, id)` in a compatible order,
-  with grouping metadata resolved separately where needed, provided they establish the required
-  visibility and source semantics.
-- **Presentation apart:** items of one group spread apart on each page, optionally in a seeded
-  order per day; cursors and exclusions follow the canonical order.
-- **Strict validation and a bound continuation protocol**, using a protected client-held token
-  or a server-held handle/revision; test both validation and page walking ([Testing](#testing)).
+Presentation can spread one group's items across a page, optionally in a seeded order per day.
+Cursors and exclusions still follow canonical selection order.
 
 ---
 
@@ -771,10 +729,8 @@ What it asks of the mechanism:
 
 ### Optional capabilities at a glance
 
-Choose capabilities from the result semantics you need. Each uses the shared
-[reference model](#part-2--reference-model) and supplies its own additional contract.
-Adopting one does not require every field or operator; preserve the core invariants
-or explicitly declare the different result the capability defines.
+Each capability adds to the [reference model](#part-2--reference-model). Preserve its core
+invariants or explicitly declare the different result semantics.
 
 | Capability | Add it when | Start here |
 |---|---|---|
@@ -788,8 +744,6 @@ or explicitly declare the different result the capability defines.
 
 Approximate eviction changes traversal guarantees and is described separately under [The cap](#the-cap).
 Encoding optimizations preserve logical state and belong under [compact exclusions](#optimization--compact-exclusions).
-The expanded and grouped loops and their JSON traces illustrate the client-held protocol;
-the same logical vectors can be retained server-side. The small core is independent of that choice.
 
 ### Prepared sources and refill
 
@@ -1009,25 +963,13 @@ so its response has no continuation token; F's terminal entry need not be sent b
 
 #### Groups enter big and are consumed
 
-A group entry suppresses older members according to the declared episode and count rules. It is
-updated as the scan meets them and removed when suppression ends or no eligible member remains.
-Group A in the [grouped trace](#how-it-evolves--a-viewer-of-two-partitions-three-pages):
-
-| Page | What the scan meets | A's entry `(last, oldest)` | A's older items still ahead |
-|---|---|---|---|
-| 1 | i1 → row A | `(i1, Nov 10)` enters | i3, i7 |
-| 2 | i3 → skipped | `(i3, Nov 10)` | i7 |
-| 3 | i7 → skipped, then passed | dropped | — |
-
-D shows the horizon at work: nothing of D lies within 180 days below i6, so when the scan reaches
-i8, twenty months older, D comes back once as "D — earlier" and is consumed again from there.
-
-The vector retains groups that may still suppress candidates ahead of the scan. After processing
-a candidate it may also retain the entry at its exact oldest position until the next comparison.
-The live set is no larger than the rows selected so far in this single-scan model, but can span
-many pages. A time horizon limits temporal reach, not density; a declared count horizon bounds
-this single-scan live set by R + 1 under the [count-horizon transition convention](#the-count-horizon). Capacity limits still need the
-exact-versus-approximate policy in rule 8.
+The [grouped trace](#how-it-evolves--a-viewer-of-two-partitions-three-pages) shows entries changing
+as older members are consumed and a group recurring when its declared episode boundary is crossed.
+An entry remains while it may suppress eligible candidates ahead; after a candidate, it can also
+remain at its exact oldest position until the next comparison. The live set is no larger than
+the rows selected so far in this single-scan model, but can span many pages. A time horizon limits
+temporal reach, not density. The qualified `R + 1` bound is defined by the
+[count-horizon convention](#the-count-horizon); capacity still needs rule 8's exact-versus-approximate policy.
 
 #### Served whole — fixed spans for groups and episodes
 
@@ -1161,10 +1103,11 @@ Measure both bytes and result changes against the fixed-horizon policy: repeated
 repeated group members, distinct results displaced under quotas, and complete chains that remain
 inline at each transport budget. Client-side deduplication of shown IDs can remove repeated rows
 from display, but cannot restore consumed quota slots or detect every repeated member under a
-different representative. With [inline-or-spill placement](#hybrid-placement), late shrinking
-does not undo an earlier switch to server-held state. Compare the whole chain, not just its final
-token, before claiming a horizon avoids session storage. A shorter horizon can also add repeated
-rows and continuation pages, so smaller R does not guarantee fewer spills.
+different representative. Under default [one-way inline-or-spill](#hybrid-placement), late
+shrinking does not return the vector inline. Optional two-way placement can return it, but keeps
+coordination records after spilling. Compare the whole chain before claiming a horizon avoids
+session storage. Repeated rows and extra requests can offset a smaller continuation, so smaller
+R does not guarantee fewer spills.
 
 #### Group heads — the case where nothing needs carrying
 
@@ -1227,19 +1170,11 @@ request. Bind the full relevant access state, not just partitions if item-level 
   the fixed-data exactness guarantee to them, especially when repeats consume finite budgets.
 - **Compact exclusions need a numeric group number** ([Optimization — compact exclusions](#optimization--compact-exclusions)). String keys remain literal. Numeric IDs may delta-compress well when they correlate
   with expiry order, but filters, visibility and backfills can break that correlation; measure it.
-- **A shared loop for compatible lists.** Plain lists, grouped lists, stable-order search results,
-  priority sections and a group's own items can share continuation machinery when their adapters
-  satisfy the same source contract:
-  - plain and grouped are one parameter (H), not two data models;
-  - the loop fills pages until exhaustion, an output budget or a work limit; access rechecks may
-    shorten them further;
-  - the server selects group or episode rows; the client displays them without collapsing
-    distinct episodes merely because they share a group key;
-  - one cursor format, one validation, one test oracle, and one place to make paging fast;
-  - database and search adapters can share a result shape, while ordering, visibility and work
-    limits must be established separately for each engine.
-- **Operations:** token size, keys and expiry, or stored-state capacity, coordination and recovery;
-  metrics and support tools for either version — [integration and reference](#part-4--integration-and-reference).
+- **A shared loop for compatible lists.** Plain/grouped lists (the H parameter), stable-order
+  search results, priority sections and a group's own items can share a cursor format, validation
+  and oracle when their adapters establish the same ordering, visibility and work contracts.
+  Selection still stops on exhaustion, quota or work limits; access rechecks may shorten output.
+  The client must not collapse distinct episodes merely because they share a group key.
 
 ### The shapes it fits
 
@@ -1263,12 +1198,8 @@ request. Bind the full relevant access state, not just partitions if item-level 
     or to its declared reservation owner;
   - **pull-to-refresh is the restart:** the familiar gesture is "new anchor, new chain", which is
     also when the selection is recomputed (the opening "Scope and guarantees");
-  - **retries have an explicit contract:** a client-held vector can reproduce the same selection
-    on a compatible server under the same plan, request and fixed data. Server-held revisions
-    need replay or an explicit stale-request response; neither protocol proves client receipt;
-  - **page size and state placement are separate choices:** small pages increase request
-    overhead. Client-held state avoids an application session store; server-held state trades
-    client token traffic for retained memory and coordination.
+  - small pages increase request overhead; [placement](#where-the-vector-lives) and its retry
+    contract remain separate choices.
 
   Two things to settle: a continuation that expired while the app slept is treated as a
   pull-to-refresh; and the order of the sections is a product decision, made from the same
@@ -1353,22 +1284,19 @@ An implementation combines that core with a storage and request protocol:
 | **Algorithm** | the page loop and its transition rules: staged or merged sources, reserve, skip, prune, emit | how selection advances correctly and what a page costs |
 | **Storage and protocol** | client-held authenticated state, a server-held vector addressed by a handle and revision, or an explicit hybrid transition | how state is recovered, requests are bound, and retries are handled |
 
-The structure and algorithm are the core mechanism; placement changes its operational contract.
-The plan can be **suspended after a page and resumed by a compatible server with access to the
-required state and sources**. A client-held token supplies the state with the request. A
-server-held handle requires a successful lookup in the appropriate state store.
+A compatible server resumes the plan with access to the required state and sources. The token
+supplies client-held state; a handle requires lookup and coordinated publication.
 
 ### Where the vector lives
 
-**The vector and its rules are the mechanism; storage placement is an architectural choice.**
-Given the same vector, plan, request and data, the selection rules do not depend on whether the
-vector came from a token or a state store. The request and failure contracts do differ:
+The same vector, plan, request and fixed data produce the same selection regardless of
+storage location. Request and failure contracts differ:
 
 | Choice | What the client carries | What the server retains between requests | Main tradeoff |
 |---|---|---|---|
 | **Client-held** | an authenticated token containing the vector | no application record of that scroll is required | token bytes and repeated encoding/decoding in exchange for independent request handling |
 | **Server-held** | an opaque handle identifying the chain and requested revision | the vector, its binding and lifecycle metadata, plus any retry information required by the protocol | small client continuations in exchange for session storage and coordination |
-| **Hybrid** | the vector inline while small; a handle, revision and digest once stored server-side | spilled vectors, bindings and replay records, plus the coordination needed to recognize transitions | small chains carry their state; larger chains require session storage and its failure contract |
+| **Hybrid** | the vector inline while small; a handle, revision and digest when spilled; optional later return inline | stored vectors and replay data as needed, with coordination retained after the first spill | small chains carry their state; spilling introduces a server-held failure contract even if the vector later returns inline |
 
 Here **stateless** means no application session store is required for continuation. It does not
 mean the vector, database, configuration or signing keys cease to exist. An optional engine
@@ -1386,55 +1314,110 @@ server-held implementations use lookup and coordinated publication instead.
 
 ### Hybrid placement
 
-Hybrid placement combines client-held and server-held continuation. This is a proposed
-generalization beyond the original staged feed. Local experiments exercise inline-or-spill
-transitions and recovery policies; these protocols are not yet part of the published reference.
+Hybrid placement combines client-held and server-held continuation. The
+[placement reference](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/placement/README.md)
+checks the contracts below with fixed data and simulated storage. These are generalizations
+beyond the original staged feed; the checks do not establish real-store durability or performance.
+
 Two forms solve different problems:
 
-- A decoded-state cache keeps the client token authoritative. Cache entries keyed by its digest
-  avoid repeated decoding on a hit; a miss decodes and validates the token normally. Cached
-  validation never replaces request authentication, expiry, current binding or access checks.
-  Cache the next token's decoded state when issuing it if forward requests should benefit.
-  Eviction is safe because the complete state remains in the token. Tokens are not smaller.
-- Inline-or-spill carries a small vector in the token, then stores it server-side when the
-  complete encoded continuation would exceed a byte threshold. **Spill** means this move into
-  server storage. The response carries an authenticated handle, revision and digest instead.
-  In this contract a chain switches only once; later shrinkage does not move it back inline.
+- A decoded-state cache leaves the client token authoritative. Cache entries keyed by its digest
+  skip decoding on a hit; a miss validates and decodes the token normally. Cached validation never
+  replaces request authentication, expiry, current binding or access checks. Caching the next
+  token's decoded state can benefit forward requests. Eviction loses nothing unique and tokens
+  remain the same size. This cache form is proposed and is not implemented in the reference.
+- Inline-or-spill carries the vector in the token while it fits, then stores it when the complete
+  encoded continuation would exceed threshold T. **Spill** means that move into server storage;
+  the response carries an authenticated handle, revision and digest. The default contract is
+  one-way: after spilling, the chain stays server-held until completion.
 
-Set the threshold from the actual transport and proxy limits, allowing for the full envelope,
-authentication and encoding overhead. Check the handle form fits too. These limits constrain
-transport, not selection. Shrinking a horizon instead changes the represented result; see
-[dynamic count horizons](#dynamic-count-horizons).
+Choose T from the transport and proxy limits, including the envelope, authentication and encoding.
+Check that the handle fits too. These are transport limits; reducing a
+[horizon](#dynamic-count-horizons) instead changes which results the plan permits.
 
-The first spill needs its own accepted transition record. If the response is lost, the client
-still holds the old inline token. Identify that transition by the authenticated chain, input
-revision or token digest, and result-affecting request parameters. Atomically publish the stored
-vector, revision and replay record; coordinate concurrent retries so they recover the same
-accepted response or an explicit conflict. Keeping the old token is useful for retry, but does
-not by itself recover the accepted handle. Check for a prior transition when an old inline token
-returns, and retain coordination records for the promised retry window. A missing required record
-is an explicit recovery failure, not permission to create a second chain silently. If every
-record disappears without detectable evidence, the server may be unable to distinguish that
-loss from a chain that never spilled; the storage contract must address this limit.
+The first spill is an accepted transition. A lost response leaves the client with its old inline
+token, so identify the transition by the authenticated chain, input revision or token digest and
+result-affecting request parameters. Atomically publish the vector, revision and replay record.
+Concurrent retries recover that accepted response or an explicit conflict. The old token alone
+cannot recover its accepted handle. Retain coordination for the promised retry window; a missing
+required record is a recovery failure. Total silent loss of that history can be indistinguishable
+from a chain that never spilled, so storage must preserve the authoritative registry or report
+its loss explicitly.
 
 Declare what happens when server-held state is missing:
 
 | Recovery policy | Required evidence and behavior | Result contract |
 |---|---|---|
-| **Exact recovery** | restore the latest accepted vector and its revision/replay metadata from a surviving authoritative record or independent checkpoint | preserves the chain under the stated storage failure model; an arbitrary older checkpoint is insufficient |
-| **Best-effort resume** | start a marked fallback from a carried last-delivered full sort position | may repeat, omit or reorder results; the position cannot reconstruct exclusions, quotas, reservations or grouping |
-| **Restart** | start a fresh original-plan chain and instruct the client to replace its old list | a new traversal, not continuation of the lost one |
+| Exact recovery | Restore the current accepted vector with matching revision/replay metadata from authoritative state or an independent checkpoint; an arbitrary older checkpoint is insufficient. | Preserves the chain under the declared failure model; otherwise fail explicitly. |
+| Best-effort resume | Start a marked fallback from a carried full sort position. | May repeat, omit or reorder results; that position cannot reconstruct coverage, quotas, reservations or grouping. |
+| Restart | Start a fresh original-plan chain and tell the client to replace its old list. | A new traversal, never an exact continuation or silent append. |
 
-The local best-effort example resumes a raw-item tail below the last representative and explicitly
-abandons the original stages and grouping. Other fallback semantics need their own contract and
-tests. None should silently claim exact continuation. A hot-cache miss with a surviving
-authoritative vector can be ordinary recovery; loss of the only vector ends exact traversal.
-RAM, TTLs and eviction are acceptable only with the corresponding declared outcome.
+The reference's best-effort fallback scans a raw-item tail below the last representative,
+abandoning the original stages and grouping. Other fallbacks need their own contracts. A hot-cache
+miss with surviving authoritative state can recover normally; loss of the only vector ends exact
+traversal. RAM, TTLs and eviction are acceptable only with the corresponding declared outcome.
 
-After spilling, apply [server-held continuation](#server-held-continuation), including binding,
-replay, concurrency and explicit expiry. Only chains that remain wholly inline avoid storing
-their vector server-side; even their requests may consult transition coordination. This is
-separate from the fully client-held version that requires no application session store.
+After the first spill, [server-held coordination](#server-held-continuation) remains authoritative,
+including when the optional contract below returns the vector inline. A wholly inline chain has
+no accepted revision head and can be replayed independently with different request parameters;
+an accepted server-recorded transition rejects conflicting parameters or stale revisions.
+Hybrid requests may still consult transition coordination before spilling. The fully client-held
+variant is the one that requires no application session store.
+
+#### Optional return to inline and recomputation
+
+Two-way placement adds hysteresis: spill strictly above T, return from a handle strictly below
+T/2, and retain the current form between those thresholds. Measure the complete candidate inline
+token. Returning it removes dedicated vector/checkpoint copies but retains the authoritative
+revision head. With full-response replay, that head can still contain the inline vector inside
+its accepted response. Returning inline therefore does not restore stateless operation.
+
+Replay by recomputation is a separate optional saving. For an accepted inline-input request,
+retain its input token hash, revision, request key and response digest instead of the full
+response. A retry runs selection from the original token with the original page size, batch size
+and candidate budget. The selector, plan/data view and canonical encoding must remain repeatable.
+Verify the complete selection-response digest, including IDs, work and continuation, before
+returning it; a mismatch is an explicit error. The reference has no hydration, so this does not
+freeze live payloads or replace current [access checks](#access-checked-again-at-hydration).
+
+Handle-input requests still retain a full accepted response. In particular, the handle-to-inline
+response is a replay bridge until the next successful publication, not merely until the client
+presents its new token or starts tentative selection. Handle-to-terminal replay survives until
+explicit expiry. Recovery redirects also retain their full responses. Recomputing an older
+inline request cannot substitute for a lost current handle checkpoint; the declared recovery
+policy still applies. Retries cost new selection work where full-response replay would only read
+the saved response, and neither form proves that the client displayed a page once.
+
+#### Placement measurements
+
+The [published runner and findings](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/placement/FINDINGS.md)
+compare the same chain, plan, request parameters, threshold and checkpoint policy across all three
+contracts: 93 cases, 558 healthy/failure traversals. The following fixture has 1,200 distinct IDs
+in two ordinary coverage-growth-and-retirement cycles, with page size 50 and T = 8 KiB:
+
+| Independent checkpoint | One-way | Two-way, full replay | Two-way with recompute | Saving vs one-way |
+|---|---:|---:|---:|---:|
+| Present | 236,541 | 221,826 | 173,698 | 26.57% |
+| Absent | 144,263 | 152,830 | 104,702 | 27.42% |
+
+Values are byte-pages: canonical serialized storage summed at response boundaries, including
+terminal replay state. They are not process RAM, elapsed residency or latency. Dedicated-vector
+residency falls from 16 boundaries to 9 in either optional contract, while replay and coordination
+remain. Retrying every accepted request adds eight selector calls with recomputation. Full-replay
+two-way can use more total storage despite releasing vectors, as the second row shows.
+
+All 81 grouped cases (200 groups of 12, explicit reservation IDs, T = 2/4/8 KiB) spill on response
+1 and never return inline. These fixtures do not establish that every grouped workload behaves
+that way. Recompute still saves storage in 45 cases and costs more in 36, versus either comparator:
+it can remove the first-spill response payload, but later handle-input responses retain their
+payloads plus extra replay metadata. Small pages make that recurring overhead more prominent.
+
+One-way and optional contracts have different envelopes; the two optional contracts have equal
+token lengths and placement decisions in each pair. Fixture IDs and represented-member lists
+also affect replay size. Use the full component and retry breakdown when choosing a contract.
+These measurements use ordinary state retirement, not D1 horizons or local UUID/BIGINT results.
+Reproduce them from a checkout with
+`python -S -m reference.placement.comparison --suite full`; reports stay under `reference/results/`.
 
 ### The token
 
@@ -1472,8 +1455,10 @@ to its authenticated reader, tenant, query, plan version and relevant scope, and
 binding on lookup and replay. A signature can protect the handle; it cannot recreate a missing
 vector or grant access to data.
 
-The [hybrid inline-or-spill form](#hybrid-placement) uses this protocol from its first spilled
-page onward, with transition recovery covering retries of the preceding inline token too.
+The [hybrid form](#hybrid-placement) uses this coordination contract from its first spill,
+including retries of the preceding inline token and any optional return inline. The sequence
+below stores accepted responses; [inline-input recomputation](#optional-return-to-inline-and-recomputation)
+is the alternative described above.
 
 **A state revision is distinct from the schema version and plan version.** It identifies the
 accepted progress of one chain. Simply replacing its vector on every request is insufficient:
@@ -1520,10 +1505,9 @@ availability requirements. In either case, bound per-chain state, aggregate acti
 replay retention; define idle and absolute expiry. Replication or persistence, if used, must
 preserve the accepted revision and its replay information under the promised failure model.
 
-If a whole chain is evicted or lost, recover it under that contract or return an explicit
-expired/unavailable continuation. Loss of state is not source exhaustion. A restart creates a
-new chain and replaces the client's prior traversal; it must not silently append a new first
-page to the old list. These storage choices do not strengthen visibility or fixed-data guarantees.
+Whole-chain loss follows the declared [recovery policy](#hybrid-placement), never source
+exhaustion or silent advancement. A restart replaces the client's list. Placement does not
+strengthen visibility or fixed-data guarantees.
 
 ### Plan changes
 
@@ -1843,12 +1827,22 @@ whole, one span stands for all of the group's items, and the list holds fewer en
 
 ### Possible implementation
 
-The vector schema and transition loop could form a reusable core, with separate client-token
-and server-store adapters. Applications supply source adapters exposing ordering, consumed
-progress, visibility and reliable exhaustion, plus group metadata or preparation state.
-The storage/protocol adapter supplies validation, binding, publication, expiry and retry behavior.
-This document specifies the design; building such a library requires implementation and
-validation of those contracts.
+The executable reference makes three bounded contracts inspectable:
+
+| Module | Checked scope |
+|---|---|
+| [Core and reservations](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/README.md) | Fixed finite sources, selected-row quotas, explicit-ID coverage/ownership, prepared buffers, safe retirement, capacity errors and retries. |
+| [Grouped coverage](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/grouped/README.md) | ID/span/hybrid coverage, partial reservations and group-aware retirement with supplied immutable membership/episodes; no grouped prepared buffers. |
+| [Placement](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/placement/README.md) | One-way default and optional two-way/recompute contracts over those selectors, using simulated storage and named failure mutations. |
+
+These are ID-only standard-library models with independent unpaged oracles and retirement checks,
+not a production adapter library. CI runs their bounded tests and mutation catalogues. Dynamic
+horizons, compressed ownership and real-store durability are outside this published validation.
+
+A reusable implementation would combine the vector and transition loop with application source
+adapters for ordering, visibility, exhaustion and group metadata, plus storage/protocol adapters
+for binding, publication, expiry and retries. Validate every supported composition against those
+actual adapters; a checked model does not establish bounded query cost or workload performance.
 
 ### Testing
 

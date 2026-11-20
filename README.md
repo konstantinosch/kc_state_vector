@@ -6,16 +6,13 @@ This grew out of a feed I was building. I wanted to give some items priority, th
 
 [Read the full pattern in **kc-state-vector.md**](./kc-state-vector.md).
 
-## The small core
+## Fit and limits
 
-Start with overlapping sources in a stable total order, including a tie-breaker such as `(sort_key, id)`. The sort key need not be a timestamp. The smallest useful version needs four things:
+Use this for forward traversal of overlapping sources in a stable total order, with a tie-breaker such as `(sort_key, id)`. One ordered, ungrouped source usually needs only a keyset cursor. Changing relevance or sort keys, random page access and totals need other mechanisms.
 
-1. Consume candidates in the order defined by the stages.
-2. Remember how far each source was consumed, including skipped candidates.
-3. Retain coverage for selected items another remaining scan could encounter.
-4. Forget that coverage only when no remaining scan needs it.
+Exact traversal requires fixed eligibility and order, consistent identities, complete source responses and retention of necessary overlap state. To exclude later arrivals, a visibility watermark must cover committed, visible writes; an insertion sequence alone is insufficient. No storage choice freezes data or grants access.
 
-Grouping, reservations and other capabilities extend this mechanism; they are not prerequisites.
+Exact mode reports a capacity error if required state cannot fit. Eviction is approximate: repeats can consume finite stage budgets and displace distinct results. Follow continuation even after an empty page caused by a scan limit. See [scope and guarantees](./kc-state-vector.md#scope-and-guarantees).
 
 ## Two pages of items
 
@@ -30,36 +27,32 @@ After page one, the vector records that the priority stage is finished, the all-
 
 As the remaining scan passes #51 and #49, their entries can leave the vector: no remaining scan can encounter them again.
 
-## Conditions and limits
+The small core consumes candidates in stage order, records consumed positions including skips, retains coverage while remaining scans need it, and safely retires it. Grouping and reservations are optional extensions.
 
-Exact traversal requires fixed eligibility and order, complete visibility through the anchor, consistent identities and retention of all necessary overlap state. Exact mode reports a capacity error if required state cannot fit. Eviction is approximate; repeats can consume finite stage budgets and displace distinct results. Follow continuation even after an empty page caused by a scan limit.
+## Placement and evidence
 
-A visibility watermark excludes later arrivals only when every eligible write through it is committed and visible to the relevant sources. An insertion sequence alone cannot guarantee this. No storage choice freezes data or grants access; access is checked again on each request.
+**Client-held** continuation carries an authenticated vector; **server-held** continuation carries a handle and revision. [Hybrid placement](./kc-state-vector.md#hybrid-placement) defaults to one-way inline-or-spill: start inline, then stay server-held after exceeding the token limit. Two-way return and replay by recomputation are optional and retain coordination state. Only the fully client-held variant avoids an application session store. See [where the vector lives](./kc-state-vector.md#where-the-vector-lives).
 
-One ordered, ungrouped source without overlap usually needs only a keyset cursor. Changing relevance or sort keys, random page access and totals need other mechanisms. See [scope and guarantees](./kc-state-vector.md#scope-and-guarantees).
+The [placement findings](./reference/placement/FINDINGS.md) show that returning inline can reduce dedicated-vector storage, while replay metadata can outweigh payload savings. The tested reservation-heavy grouped fixtures spilled on their first response. These are serialized-storage measurements on fixed synthetic fixtures, not performance guarantees or production size estimates. Recomputing retries adds selector work and requires repeatable selection.
 
 ## Reading and using the pattern
 
-**Client-held** continuation carries the vector in an authenticated token. **Server-held** continuation carries a handle and revision; the server retains the vector and coordinates retries. [Hybrid placement](./kc-state-vector.md#hybrid-placement) starts inline and switches to a handle when the encoded state grows too large. Only entirely client-held chains avoid storing their vector server-side; hybrid transitions also need a declared retry and coordination contract. See [where the vector lives](./kc-state-vector.md#where-the-vector-lives).
+This README is the introduction; the full document holds the mechanism and integration detail:
 
-The full document separates the mechanism from its extensions:
+1. [The small core](./kc-state-vector.md#part-1--the-small-core): minimal state, page loop and guarantees.
+2. [Reference model](./kc-state-vector.md#part-2--reference-model): rules, contracts, schema and expanded trace.
+3. [Optional capabilities](./kc-state-vector.md#part-3--optional-capabilities): prepared sources, reservations, grouping, horizons and merged sources.
+4. [Integration and reference](./kc-state-vector.md#part-4--integration-and-reference): storage, queries, hydration, capacity, retries and operations.
 
-1. [The small core](./kc-state-vector.md#part-1--the-small-core): the minimal state, page loop and guarantees.
-2. [Reference model](./kc-state-vector.md#part-2--reference-model): rules, fields, stage and result contracts, schema, expanded loop and trace.
-3. [Optional capabilities](./kc-state-vector.md#part-3--optional-capabilities): prepared sources, [reservations](./kc-state-vector.md#reservations-for-a-later-stage), [grouped results](./kc-state-vector.md#grouped-results--one-row-per-group), horizons and merged-source examples.
-4. [Integration and reference](./kc-state-vector.md#part-4--integration-and-reference): storage, source queries, bulk hydration, capacity, retries, testing and operations.
-
-A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern for implementation and review.
-
-Build it with `python skills/build_skill.py`. [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging; generated archives stay local.
-
-An [executable reference](./reference/README.md) makes the fixed-data core and explicit-ID reservations inspectable. It includes an independent unpaged oracle, retirement checks, synthetic fixtures and tests, with core mutation checks in CI. Run `python -m reference --example core --page-size 3` for the example above. Its [validation scope](./reference/VALIDATION.md) distinguishes checked semantics from database performance and the optional capabilities it does not implement.
-
-An optional [grouped coverage reference](./reference/grouped/README.md) compares IDs, spans and hybrids, including partial reservations and group-aware retirement. It has its own oracle, tests and [scope](./reference/grouped/VALIDATION.md); it does not extend the core's guarantees to every combination of features.
+Executable references cover the [core and explicit-ID reservations](./reference/README.md), [grouped coverage](./reference/grouped/README.md) and [placement protocols](./reference/placement/README.md), with independent oracles, retirement checks and bounded validation scopes. Run `python -m reference --example core --page-size 3` for the example above.
 
 This publication provides a design, worked examples and implementation guidance, composing existing keyset or `search_after` cursors, stages or merged sources, and safely pruned overlap state. Query examples use PostgreSQL and Elasticsearch/OpenSearch. Implementations must validate correctness and performance against their own workloads.
 
-The original application demonstrated the staged-feed core. Server-held continuation, group episodes, merged sources, visibility watermarks and operational extensions are proposed generalizations. Reports of duplicates or skipped rows under the stated exact-traversal conditions are welcome, ideally with the smallest reproducing sequence of pages.
+The original application demonstrated the staged-feed core. Server-held continuation, group episodes, merged sources, visibility watermarks and operational extensions are proposed generalizations beyond that application. The executable references now check bounded fixed-data grouping and placement contracts. Dynamic count horizons, including D1, remain proposed and locally explored; the published references do not validate them.
+
+Reports of duplicates or skipped rows under the stated exact-traversal conditions are welcome, ideally with the smallest reproducing sequence of pages.
+
+A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern. Build it with `python skills/build_skill.py`; [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging. Generated archives stay local.
 
 ## Acknowledgements
 
