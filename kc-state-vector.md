@@ -2,8 +2,9 @@
 
 A design pattern for paging through ordered results composed from several sources or grouped
 into rows. **The core is the state vector and the rules that select results, advance the vector
-and retire state safely.** The vector can travel with the client or remain on the server;
-stateless application pagination is the client-held version.
+and retire state safely.** The vector can travel with the client, remain on the server, or move
+from inline to server-held storage under a declared hybrid protocol. Stateless application
+pagination is the fully client-held version.
 
 Sources return `(sort key, id)` positions in a stable total order; grouping keys can be resolved
 separately from those IDs. The mechanism composes keyset scans, overlap tracking and explicit
@@ -369,7 +370,8 @@ window on each page. The server still defines the window rule and validates its 
   been selected, with a fixed birth count that is never renewed. This can allow another row for
   the same group even within a time episode. It is a declared result policy, including how these
   rows consume stage budgets, not an exact substitute for unlimited group suppression. It bounds
-  live entries by R + 1 under the [count-horizon transition rule](#the-count-horizon).
+  live entries by R + 1 in the simple one-entry-per-row case without ownership protection,
+  under the [count-horizon transition rule](#the-count-horizon).
 - **Both:** an entry ends at whichever comes first.
 
 **A recency or count window bounds its own exclusions.** Every entry such a stage creates lies
@@ -458,9 +460,11 @@ descriptors plus a bounded cache of explicit member IDs; cache eviction is safe 
 authoritative exclusion remains evaluable on a cache miss.
 
 Safe pruning has the same set interpretation. A descriptor can be removed once its set has no
-intersection with any remaining consumer's reachable candidates, including stages not yet
-started. A declared horizon can instead change the excluded set by policy; that is a result rule,
-not proof that the old set has become unreachable.
+intersection with any remaining consumer's reachable candidates or future group expansions,
+including stages not yet started, and no pending ownership decision needs it. Passing an item's
+raw position alone is insufficient if a later candidate can expand back to that item. A declared
+horizon can instead change the excluded set by policy; that is a result rule, not proof that the
+old set has become unreachable.
 
 The state size therefore follows the **coverage still overlapping the remaining scans**, not
 the total number of results already served. With a stationary rate of new exclusions and finite
@@ -779,6 +783,7 @@ or explicitly declare the different result the capability defines.
 | Reservations | another stage must leave a set for its future owner | [Reservations for a later stage](#reservations-for-a-later-stage) |
 | Grouped rows and episodes | one selected row represents several underlying items | [Grouped results](#grouped-results--one-row-per-group) |
 | Time or count horizons | recurrence after a declared boundary is part of the result | [Gap horizon](#the-horizon--the-gap-rule-and-plain-and-grouped-as-one-parameter) and [count horizon](#the-count-horizon) |
+| Dynamic count horizons | suppression should shorten with declared scroll depth, or under explicit approximate pressure rules | [Dynamic count horizons](#dynamic-count-horizons) |
 | Ordered merging | several ordered sources must contribute interleaved results | [Examples](#examples), especially Example 4 |
 
 Approximate eviction changes traversal guarantees and is described separately under [The cap](#the-cap).
@@ -930,11 +935,12 @@ while |page| < N and remaining > 0:
             c.time ≤ last.time − H                  -- gap H or longer
             c.position < oldest                    -- no member remains below this position
             selectedTotal − born ≥ R               -- only when count suppression is declared
-        if a group-level predicate fails: continue
-        if c's group has an entry: entry.last = c.position; continue
-        page += (c, key); increment this source's served count
-        if count suppression is declared: selectedTotal += 1
-        excl += (group, key, last = c.position, oldest, born = selectedTotal if needed)
+        if the group-level predicates pass:
+            if c's group has an entry: entry.last = c.position
+            else:
+                page += (c, key); increment this source's served count
+                if count suppression is declared: selectedTotal += 1
+                excl += (group, key, last = c.position, oldest, born = selectedTotal if needed)
         enforce the declared state-cap policy at this candidate boundary
         if exact state cannot fit: discard tentative page; return a capacity error
     if exhausted and batch wholly consumed: hasMore = false; break
@@ -1020,7 +1026,7 @@ The vector retains groups that may still suppress candidates ahead of the scan. 
 a candidate it may also retain the entry at its exact oldest position until the next comparison.
 The live set is no larger than the rows selected so far in this single-scan model, but can span
 many pages. A time horizon limits temporal reach, not density; a declared count horizon bounds
-the live set by R + 1 under the [count-horizon transition convention](#the-count-horizon). Capacity limits still need the
+this single-scan live set by R + 1 under the [count-horizon transition convention](#the-count-horizon). Capacity limits still need the
 exact-versus-approximate policy in rule 8.
 
 #### Served whole — fixed spans for groups and episodes
@@ -1035,12 +1041,15 @@ those that pass the list's filters, inserted at or before the anchor, visible to
 ```
 group G: 100 items; 12 pass the list's filters, from Nov 3 to Nov 9
 entry:   [span, G, oldestPosition, newestPosition]  — bounds, not twelve ids
-dropped: when the scan passes Nov 3 (newest first) or Nov 9 (oldest first)
+dropped: once the scan passes the bound and no later expansion or owner needs the coverage
 ```
 
 - **Exact by construction.** A span may stand only for items that were served: over items not
   served, it would hide them (against rule 8). Serving the group whole makes the span cover
-  exactly what was served.
+  exactly what was served. Split spans at unrepresented same-group holes, including reserved
+  members; unrelated groups between the bounds do not create holes. Subtracting prior coverage
+  and reservations can leave several disjoint residual rows of the same group. Consuming a
+  candidate whose group is deferred does not serve its reservation.
 - **Filters narrow the span.** Filters apply per item, and alike in every stage. An item that
   passes them can bring its group in; one that passes them while its group is excluded is
   skipped; one that fails them takes no part. The span covers the group's matching items only;
@@ -1057,8 +1066,9 @@ dropped: when the scan passes Nov 3 (newest first) or Nov 9 (oldest first)
   episodes: if G's episodes at 100 and 80 were represented, merging them into `[80,100]` could
   wrongly hide an unrepresented episode at 90. Group key alone is not a span's identity.
 - **Either direction.** One consumer can stop checking a span after passing `lo` (newest first)
-  or `hi` (oldest first). Remove it from the vector only when every remaining applicable consumer
-  has passed it or is done. An unstarted stage can still encounter it. Carry both boundaries for
+  or `hi` (oldest first), provided future group expansion cannot reach back into it. Remove it
+  only when no remaining consumer or pending ownership decision needs its coverage. An unstarted
+  stage can still encounter it. Carry both boundaries for
   episodes and mixed scan directions; an insertion-sequence anchor need not bound event-time positions.
 - **The condition: the stages share the list's scope** (rule 12). A stage's own criterion
   decides which groups come first. The span covers all eligible members represented by that row,
@@ -1101,12 +1111,60 @@ Before each subsequent candidate, remove entries with `selectedTotal - born >= R
 integer R >= 0.
 Skipped candidates do not increase this count and do not renew `born`. This convention retains
 at most R + 1 entries immediately after selection and at most R before the next candidate, when
-each row adds one entry. R = 0 allows another row at the next candidate.
+each row adds one entry and no ownership rule protects older coverage. R = 0 allows another row
+at the next candidate. With ownership protection, expiry checkpoints bound only unprotected
+coverage; newly resolved claims may leave older events retained until the next expiry check.
 
 This is a recurrence policy for represented groups, not transparent compression of an unlimited
 seen set. Declare where it applies and how recurring rows consume finite budgets. Fixed spans or
 item exclusions required for exact cross-stage coverage must not expire by count unless that
 weaker suppression is explicitly part of the result definition.
+
+#### Dynamic count horizons
+
+A count horizon can shorten as a chain advances. This is a proposed generalization, explored in
+local fixed-data experiments; the published reference does not yet validate it. Distinguish a
+declared recurrence policy from a response to memory pressure:
+
+| Form | Transition | Meaning |
+|---|---|---|
+| **Depth schedule (D1)** | before each candidate, choose `R(selectedTotal)` from the bound plan | exact relative to that declared recurrence policy, not unlimited deduplication |
+| **Pressure policy (D2)** | after every consumed candidate, apply a declared shrink rule if retained state exceeds its threshold | approximate suppression; repeats can displace distinct results under finite budgets |
+| Page-boundary byte trigger (D3) | shrink only when returning a page | unsuitable for a page-size-independent result; retain it only as a negative test |
+
+For example, D1 can declare `R(n) = 500` while `n < 2000`, then `50`. Here `n` counts selected
+rows across the chain, including permitted repeats, not requests or candidates examined. Apply
+the existing `n - born >= R(n)` expiry test before deciding each candidate. Skips do not renew
+birth counts. An unpaged oracle can compute this policy from output history without simulating
+the pager's safe pruning. Changing page or batch size should leave its concatenated result unchanged.
+
+For D2, declare the pressure metric, decreasing radii, transition order and any tie-breaks. One
+policy finishes the candidate's selection and ownership decisions, prunes unnecessary coverage,
+then lowers R through the declared steps until pressure is at or below the threshold or the minimum R
+is reached. Run this after skipped candidates too. Counting encoded descriptors can make the
+policy representation-dependent: IDs and spans may then produce different approximate results.
+Test page and batch invariance separately for each encoding. Its oracle needs an independent
+simulation of retention; an output-history-only oracle does not establish the pressure decisions.
+The local model settles completed stages from full finite source metadata before each pressure
+check. An engine adapter needs equally reliable completion evidence and the same transition order;
+batch boundaries alone cannot supply it. The illustrative loops above do not implement this
+additional pressure/ownership composition.
+
+Preserve ownership facts. Shortening duplicate suppression does not authorize discarding pending
+reservations, intentional omissions or evidence needed to decide whether an owner was served.
+One explicit rule keeps each selected row's coverage together until count expiry, protecting it
+while any represented member has a pending claim. Those protected records can exceed the horizon
+and pressure target. Claims resolved after an expiry check can also leave older, newly unprotected
+events until the next check, so `R + 1` is not a bound on the complete continuation.
+
+Measure both bytes and result changes against the fixed-horizon policy: repeated representatives,
+repeated group members, distinct results displaced under quotas, and complete chains that remain
+inline at each transport budget. Client-side deduplication of shown IDs can remove repeated rows
+from display, but cannot restore consumed quota slots or detect every repeated member under a
+different representative. With [inline-or-spill placement](#hybrid-placement), late shrinking
+does not undo an earlier switch to server-held state. Compare the whole chain, not just its final
+token, before claiming a horizon avoids session storage. A shorter horizon can also add repeated
+rows and continuation pages, so smaller R does not guarantee fewer spills.
 
 #### Group heads — the case where nothing needs carrying
 
@@ -1293,7 +1351,7 @@ An implementation combines that core with a storage and request protocol:
 |---|---|---|
 | **Structure** | the vector: anchor, cursors, exclusions with expiry positions, prepared lists, counters | what must be remembered, and its bounds |
 | **Algorithm** | the page loop and its transition rules: staged or merged sources, reserve, skip, prune, emit | how selection advances correctly and what a page costs |
-| **Storage and protocol** | client-held authenticated state, or a server-held vector addressed by a handle and revision | how state is recovered, requests are bound, and retries are handled |
+| **Storage and protocol** | client-held authenticated state, a server-held vector addressed by a handle and revision, or an explicit hybrid transition | how state is recovered, requests are bound, and retries are handled |
 
 The structure and algorithm are the core mechanism; placement changes its operational contract.
 The plan can be **suspended after a page and resumed by a compatible server with access to the
@@ -1310,6 +1368,7 @@ vector came from a token or a state store. The request and failure contracts do 
 |---|---|---|---|
 | **Client-held** | an authenticated token containing the vector | no application record of that scroll is required | token bytes and repeated encoding/decoding in exchange for independent request handling |
 | **Server-held** | an opaque handle identifying the chain and requested revision | the vector, its binding and lifecycle metadata, plus any retry information required by the protocol | small client continuations in exchange for session storage and coordination |
+| **Hybrid** | the vector inline while small; a handle, revision and digest once stored server-side | spilled vectors, bindings and replay records, plus the coordination needed to recognize transitions | small chains carry their state; larger chains require session storage and its failure contract |
 
 Here **stateless** means no application session store is required for continuation. It does not
 mean the vector, database, configuration or signing keys cease to exist. An optional engine
@@ -1318,12 +1377,64 @@ snapshot can also retain state independently of where the application keeps the 
 Server-held vectors may live in process-local RAM or a shared store. A handle identifies stored
 state; a signature can protect a handle but cannot replace missing state or current authorization.
 The [server-held protocol](#server-held-continuation) describes revision checks, replay,
-concurrency and expiry. Neither version guarantees exactly-once receipt or display by the client.
+concurrency and expiry. No placement guarantees exactly-once receipt or display by the client.
 
 **Reading the examples.** The expanded and grouped page loops, token encodings and JSON traces use the
 client-held version unless stated otherwise. The traces show the same logical state a server
 could retain. Token-specific validation and serialization wrap the shared selection rules;
 server-held implementations use lookup and coordinated publication instead.
+
+### Hybrid placement
+
+Hybrid placement combines client-held and server-held continuation. This is a proposed
+generalization beyond the original staged feed. Local experiments exercise inline-or-spill
+transitions and recovery policies; these protocols are not yet part of the published reference.
+Two forms solve different problems:
+
+- A decoded-state cache keeps the client token authoritative. Cache entries keyed by its digest
+  avoid repeated decoding on a hit; a miss decodes and validates the token normally. Cached
+  validation never replaces request authentication, expiry, current binding or access checks.
+  Cache the next token's decoded state when issuing it if forward requests should benefit.
+  Eviction is safe because the complete state remains in the token. Tokens are not smaller.
+- Inline-or-spill carries a small vector in the token, then stores it server-side when the
+  complete encoded continuation would exceed a byte threshold. **Spill** means this move into
+  server storage. The response carries an authenticated handle, revision and digest instead.
+  In this contract a chain switches only once; later shrinkage does not move it back inline.
+
+Set the threshold from the actual transport and proxy limits, allowing for the full envelope,
+authentication and encoding overhead. Check the handle form fits too. These limits constrain
+transport, not selection. Shrinking a horizon instead changes the represented result; see
+[dynamic count horizons](#dynamic-count-horizons).
+
+The first spill needs its own accepted transition record. If the response is lost, the client
+still holds the old inline token. Identify that transition by the authenticated chain, input
+revision or token digest, and result-affecting request parameters. Atomically publish the stored
+vector, revision and replay record; coordinate concurrent retries so they recover the same
+accepted response or an explicit conflict. Keeping the old token is useful for retry, but does
+not by itself recover the accepted handle. Check for a prior transition when an old inline token
+returns, and retain coordination records for the promised retry window. A missing required record
+is an explicit recovery failure, not permission to create a second chain silently. If every
+record disappears without detectable evidence, the server may be unable to distinguish that
+loss from a chain that never spilled; the storage contract must address this limit.
+
+Declare what happens when server-held state is missing:
+
+| Recovery policy | Required evidence and behavior | Result contract |
+|---|---|---|
+| **Exact recovery** | restore the latest accepted vector and its revision/replay metadata from a surviving authoritative record or independent checkpoint | preserves the chain under the stated storage failure model; an arbitrary older checkpoint is insufficient |
+| **Best-effort resume** | start a marked fallback from a carried last-delivered full sort position | may repeat, omit or reorder results; the position cannot reconstruct exclusions, quotas, reservations or grouping |
+| **Restart** | start a fresh original-plan chain and instruct the client to replace its old list | a new traversal, not continuation of the lost one |
+
+The local best-effort example resumes a raw-item tail below the last representative and explicitly
+abandons the original stages and grouping. Other fallback semantics need their own contract and
+tests. None should silently claim exact continuation. A hot-cache miss with a surviving
+authoritative vector can be ordinary recovery; loss of the only vector ends exact traversal.
+RAM, TTLs and eviction are acceptable only with the corresponding declared outcome.
+
+After spilling, apply [server-held continuation](#server-held-continuation), including binding,
+replay, concurrency and explicit expiry. Only chains that remain wholly inline avoid storing
+their vector server-side; even their requests may consult transition coordination. This is
+separate from the fully client-held version that requires no application session store.
 
 ### The token
 
@@ -1339,8 +1450,9 @@ server-held handle can also have a protected envelope, but uses the separate con
   may start a fresh chain and replace its old list rather than append new page 1 (Example 6).
 - **Size.** A byte budget, checked before the MAC is verified, and a cap on the size after
   decompression. Check the encoded result before returning it too: entry-count limits alone do
-  not bound variable-length keys, prepared items and envelope overhead. Exact overflow is an error,
-  not permission to discard state or return an end-of-results marker.
+  not bound variable-length keys, prepared items and envelope overhead. Exact overflow is an error
+  unless a declared alternative such as [hybrid placement](#hybrid-placement) preserves the state.
+  It is not permission to discard state or return an end-of-results marker.
 - **Transport.** A body or suitable header avoids putting tokens into browser history and many
   URL logs. Check actual header/body/proxy limits and logging behavior; no transport makes a
   readable signed payload confidential.
@@ -1359,6 +1471,9 @@ a state revision. These may be encoded in one opaque continuation value. Bind th
 to its authenticated reader, tenant, query, plan version and relevant scope, and check that
 binding on lookup and replay. A signature can protect the handle; it cannot recreate a missing
 vector or grant access to data.
+
+The [hybrid inline-or-spill form](#hybrid-placement) uses this protocol from its first spilled
+page onward, with transition recovery covering retries of the preceding inline token too.
 
 **A state revision is distinct from the schema version and plan version.** It identifies the
 accepted progress of one chain. Simply replacing its vector on every request is insufficient:
@@ -1464,7 +1579,7 @@ necessary exclusions from a still-running chain is approximate traversal, not or
 finite budgets are permitted outcomes. For example, stage 1 serves X, Y; stage 2 has Y, Z and
 budget 1. Keeping Y's exclusion produces X, Y, Z. Evicting it produces X, Y, Y and loses Z.
 
-Choose a deterministic eviction rule, including tie-breaks, and enforce it after each selected
+Choose a deterministic eviction rule, including tie-breaks, and enforce it after each consumed
 candidate, not only at page boundaries. With H = infinity, cap 1 and candidates A@5, B@4, A@3,
 B@2, C@1, page-end-only eviction can give different sequences for page sizes 2 and 10. Per-candidate
 enforcement removes that particular dependence, but does not restore exactness. Evicting the

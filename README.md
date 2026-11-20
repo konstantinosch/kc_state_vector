@@ -1,6 +1,6 @@
 # kc-state-vector
 
-A pagination pattern for ordered lists, search results and grouped views whose sources can overlap. **The core is a state vector and the rules for advancing it:** enough state to pause a composed query plan after a page and resume later. The client or the server can hold that vector.
+A pagination pattern for ordered lists, search results and grouped views whose sources can overlap. **The core is a state vector and the rules for advancing it:** enough state to pause a composed query plan after a page and resume later. The client, the server or a hybrid of the two can hold that vector.
 
 This grew out of a feed I was building. I wanted to give some items priority, then fill the page from a broader query. The interesting part came on page two: some rows the broader scan hadn't reached yet had already appeared in the priority section.
 
@@ -34,13 +34,13 @@ As the remaining scan passes #51 and #49, their entries can leave the vector: no
 
 Exact traversal requires fixed eligibility and order, complete visibility through the anchor, consistent identities and retention of all necessary overlap state. Exact mode reports a capacity error if required state cannot fit. Eviction is approximate; repeats can consume finite stage budgets and displace distinct results. Follow continuation even after an empty page caused by a scan limit.
 
-A visibility watermark excludes later arrivals only when every eligible write through it is committed and visible to the relevant sources. An insertion sequence alone cannot guarantee this. Neither storage choice freezes data or grants access; access is checked again on each request.
+A visibility watermark excludes later arrivals only when every eligible write through it is committed and visible to the relevant sources. An insertion sequence alone cannot guarantee this. No storage choice freezes data or grants access; access is checked again on each request.
 
 One ordered, ungrouped source without overlap usually needs only a keyset cursor. Changing relevance or sort keys, random page access and totals need other mechanisms. See [scope and guarantees](./kc-state-vector.md#scope-and-guarantees).
 
 ## Reading and using the pattern
 
-**Client-held** continuation carries the vector in an authenticated token. **Server-held** continuation carries a handle and revision; the server retains the vector and coordinates retries. Only the client-held version avoids an application pagination session store. See [where the vector lives](./kc-state-vector.md#where-the-vector-lives).
+**Client-held** continuation carries the vector in an authenticated token. **Server-held** continuation carries a handle and revision; the server retains the vector and coordinates retries. [Hybrid placement](./kc-state-vector.md#hybrid-placement) starts inline and switches to a handle when the encoded state grows too large. Only entirely client-held chains avoid storing their vector server-side; hybrid transitions also need a declared retry and coordination contract. See [where the vector lives](./kc-state-vector.md#where-the-vector-lives).
 
 The full document separates the mechanism from its extensions:
 
