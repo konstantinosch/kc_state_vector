@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "all_zero_quotas",
+  "records": [{"id": "A", "sort_key": 1}],
+  "stages": [
+    {"name": "first", "ids": ["A"], "quota": 0},
+    {"name": "second", "ids": ["A"], "quota": 0}
+  ]
+}

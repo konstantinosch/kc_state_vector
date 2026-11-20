@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "three_overlapping_stages",
+  "records": [
+    {"id": "A", "sort_key": 6},
+    {"id": "B", "sort_key": 5},
+    {"id": "C", "sort_key": 4},
+    {"id": "D", "sort_key": 3},
+    {"id": "E", "sort_key": 2},
+    {"id": "F", "sort_key": 1}
+  ],
+  "stages": [
+    {"name": "first", "ids": ["A", "B", "C"], "quota": 2},
+    {"name": "middle", "ids": ["B", "C", "D"], "quota": 1},
+    {"name": "rest", "ids": ["A", "B", "C", "D", "E", "F"], "quota": null}
+  ]
+}

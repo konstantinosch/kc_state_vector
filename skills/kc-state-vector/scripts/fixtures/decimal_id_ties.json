@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "decimal_id_ties",
+  "records": [
+    {"id": "10", "sort_key": 7},
+    {"id": "2", "sort_key": 7}
+  ],
+  "stages": [
+    {"name": "all", "ids": ["10", "2"], "quota": null}
+  ]
+}

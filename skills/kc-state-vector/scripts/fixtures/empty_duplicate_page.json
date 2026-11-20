@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "empty_duplicate_page",
+  "records": [
+    {"id": "A", "sort_key": 3},
+    {"id": "B", "sort_key": 2},
+    {"id": "C", "sort_key": 1}
+  ],
+  "stages": [
+    {"name": "first", "ids": ["A", "B"], "quota": null},
+    {"name": "all", "ids": ["A", "B", "C"], "quota": null}
+  ]
+}

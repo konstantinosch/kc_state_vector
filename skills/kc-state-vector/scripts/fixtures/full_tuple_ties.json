@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "full_tuple_ties",
+  "records": [
+    {"id": "a", "sort_key": 7},
+    {"id": "negative", "sort_key": -1},
+    {"id": "z", "sort_key": 7},
+    {"id": "m", "sort_key": 7}
+  ],
+  "stages": [
+    {"name": "priority", "ids": ["a", "m", "negative", "z"], "quota": 2},
+    {"name": "all", "ids": ["negative", "z", "a", "m"], "quota": null}
+  ]
+}

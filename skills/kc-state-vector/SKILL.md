@@ -4,7 +4,7 @@ description: Design, implement or review pagination for duplicate/missing rows i
 license: MIT
 metadata:
   author: Konstantinos Chantzis
-  version: "0.1.3"
+  version: "0.2.0"
 ---
 
 # State-vector pagination
@@ -51,7 +51,8 @@ chosen section through the next heading of equal or higher level, including its
 subsections and any linked contract it depends on. Do not load the entire reference
 by default. Fragment links or heading search are navigation aids, not requirements
 for a particular tool. The package is self-contained and requires no particular
-model, tool API, database or runtime.
+model, tool API or database. Its instructions are readable without Python; the
+optional executable self-check kit uses the Python standard library.
 
 ## Establish the result before choosing machinery
 
@@ -182,13 +183,29 @@ reference checks do not establish production adapter or storage guarantees.
 
 ## Validate the supported plan and report the result
 
-For implementation work, use the project's test framework and small synthetic
-fixtures before performance work. Compute an expected unpaged result independently
-of the candidate loop, according to the declared plan. Compare concatenated
-selections before presentation, under fixed data and sufficient state capacity.
-Vary page size (including 1 and changes mid-chain), batch size and candidate budgets;
-follow empty pages while continuation remains. Do not use the implementation itself
-to generate its expected output.
+For implementation work within the fixed-data staged-core profile, use the bundled
+[self-check kit](references/self-check.md) before presenting the implementation as
+verified. Adapt the actual pager through its small factory/page interface; start
+from [the template](scripts/template_pager.py) or inspect the
+[working example](scripts/sample_pager.py). Run `scripts/check_pager.py` with Python
+and the adapter path. The kit supplies an independent unpaged oracle; do not use
+the candidate implementation to generate its own expected output.
+
+The required tier needs only a continuation and page size. Declare batch, candidate
+budget and stage-label capabilities only when the actual adapter supports them.
+Report checks run and skipped; an ID-sequence pass does not establish work-budget
+or attribution checks. Its profile is descending integer sort keys with ASCII ID
+tie-breakers. Ascending order, timestamps or multi-column keys need an explicit
+order-preserving mapping, including every tie-breaker; do not silently discard keys.
+
+If the host cannot execute Python, walk the
+[readable fixture results](references/self-check-examples.md) page by page, tracking
+cursors and coverage. Label that result an **unexecuted walkthrough**, not a passing
+test run. A design-only request needs no invented implementation just to run the kit.
+
+For capabilities outside the kit, use the project's test framework and independent
+expected results. Vary page size (including 1 and changes mid-chain), supported
+batch sizes and candidate budgets; follow empty pages while continuation remains.
 
 Exercise overlaps, ties, quota boundaries and incomplete reads. Add reservation,
 group/horizon, capacity and protocol cases only for capabilities being used. Test

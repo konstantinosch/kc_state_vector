@@ -31,8 +31,20 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "skills/kc-state-vector"
 SKILL_MARKDOWN_FILES = ("README.md", "kc-state-vector.md", f"{PACKAGE}/SKILL.md",
-                        f"{PACKAGE}/references/kc-state-vector.md")
-SKILL_BUILD_FILES = (*SKILL_MARKDOWN_FILES, "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
+                        f"{PACKAGE}/references/kc-state-vector.md",
+                        f"{PACKAGE}/references/self-check.md",
+                        f"{PACKAGE}/references/self-check-examples.md")
+SKILL_KIT_SOURCE_FILES = tuple(f"{PACKAGE}/{name}" for name in (
+    "scripts/oracle.py", "scripts/check_pager.py", "scripts/sample_pager.py",
+    "scripts/template_pager.py", "scripts/mutations.py",
+    "scripts/fixtures/priority_51_49_48.json", "scripts/fixtures/full_tuple_ties.json",
+    "scripts/fixtures/decimal_id_ties.json", "scripts/fixtures/empty_duplicate_page.json",
+    "scripts/fixtures/three_overlapping_stages.json", "scripts/fixtures/unread_batch_tail.json",
+    "scripts/fixtures/empty_plan.json", "scripts/fixtures/empty_sources.json",
+    "scripts/fixtures/zero_quotas.json", "scripts/fixtures/all_zero_quotas.json",
+))
+SKILL_BUILD_FILES = (*SKILL_MARKDOWN_FILES, *SKILL_KIT_SOURCE_FILES,
+                     "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
 REFERENCE_MARKDOWN_FILES = ("reference/README.md", "reference/VALIDATION.md",
                             "reference/grouped/README.md", "reference/grouped/VALIDATION.md",
                             "reference/placement/README.md", "reference/placement/VALIDATION.md",
@@ -79,10 +91,14 @@ MARKDOWN_FILES = (*SKILL_MARKDOWN_FILES, *REFERENCE_MARKDOWN_FILES)
 PUBLIC_FILES = (*SKILL_BUILD_FILES, *REFERENCE_MARKDOWN_FILES, *REFERENCE_SOURCE_FILES)
 PUBLIC_SUPPORT_FILES = (".gitignore", ".gitattributes", "requirements-checks.txt",
                         "scripts/check_docs.py", "scripts/tests/test_check_docs.py",
+                        "scripts/tests/test_skill_oracle.py", "scripts/tests/test_skill_self_check.py",
                         ".github/workflows/checks.yml")
 ARCHIVE_FILES = {"kc-state-vector/SKILL.md": f"{PACKAGE}/SKILL.md",
                  "kc-state-vector/references/kc-state-vector.md": f"{PACKAGE}/references/kc-state-vector.md",
-                 "kc-state-vector/LICENSE": f"{PACKAGE}/LICENSE"}
+                 "kc-state-vector/LICENSE": f"{PACKAGE}/LICENSE",
+                 "kc-state-vector/references/self-check.md": f"{PACKAGE}/references/self-check.md",
+                 "kc-state-vector/references/self-check-examples.md": f"{PACKAGE}/references/self-check-examples.md",
+                 **{path.removeprefix("skills/"): path for path in SKILL_KIT_SOURCE_FILES}}
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -239,6 +255,13 @@ def check_repository(root, *, build=True):
             errors.append(f"Missing public file or unsupported symlink: {relative}")
     if errors:
         return errors
+    for relative in SKILL_KIT_SOURCE_FILES:
+        if relative.endswith(".json"):
+            try:
+                json.loads((root / relative).read_text(encoding="utf-8"),
+                           parse_constant=_nonfinite, parse_float=Decimal)
+            except (ValueError, UnicodeError, RecursionError) as exc:
+                errors.append(f"{relative}: invalid JSON fixture: {exc}")
     for source, bundled in (("kc-state-vector.md", f"{PACKAGE}/references/kc-state-vector.md"),
                             ("LICENSE", f"{PACKAGE}/LICENSE")):
         if (root / source).read_bytes() != (root / bundled).read_bytes():
@@ -292,7 +315,7 @@ def main():
         raise SystemExit(1)
     print("PASS: public links/anchors, JSON examples, skill metadata and bundled copies")
     if not args.skip_build:
-        print("PASS: isolated three-file skill package and two identical rebuilds")
+        print(f"PASS: isolated {len(ARCHIVE_FILES)}-file skill package and two identical rebuilds")
 
 
 if __name__ == "__main__":

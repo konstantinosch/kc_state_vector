@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.check_docs import REFERENCE_SOURCE_FILES, check_repository
+from scripts.check_docs import REFERENCE_SOURCE_FILES, SKILL_KIT_SOURCE_FILES, check_repository
 
 
 BUILDER = Path(__file__).resolve().parents[2] / "skills" / "build_skill.py"
@@ -35,7 +35,11 @@ class CheckDocsTests(unittest.TestCase):
         self.write("skills/build_skill.py", BUILDER.read_text(encoding="utf-8"))
         self.write("skills/kc-state-vector/SKILL.md", SKILL)
         self.write("skills/kc-state-vector/references/kc-state-vector.md", PATTERN)
+        self.write("skills/kc-state-vector/references/self-check.md", "# Self-check\n\n[Examples](self-check-examples.md)\n")
+        self.write("skills/kc-state-vector/references/self-check-examples.md", "# Self-check examples\n\nFinite synthetic fixtures.\n")
         self.write("skills/kc-state-vector/LICENSE", (self.root / "LICENSE").read_text())
+        for relative in SKILL_KIT_SOURCE_FILES:
+            self.write(relative, '{}\n' if relative.endswith('.json') else '# Standalone kit fixture\n')
         self.write("reference/README.md", "# Executable reference\n\n[Scope](VALIDATION.md#scope)\n")
         self.write("reference/VALIDATION.md", "# Validation\n\n## Scope\n\nFixed finite inputs.\n")
         self.write("reference/grouped/README.md", "# Grouped reference\n\n[Scope](VALIDATION.md#scope)\n")
@@ -211,6 +215,38 @@ class CheckDocsTests(unittest.TestCase):
                 self.write("reference/placement/README.md", f"# Placement\n\n[Extra]({target})\n")
                 self.assert_rejected(mentions="non-public")
 
+    def test_self_check_links_resolve_only_to_explicit_package_members(self):
+        self.write("skills/kc-state-vector/references/self-check.md", "# Self-check\n\n"
+                   "[Examples](self-check-examples.md)\n[Checker](../scripts/check_pager.py)\n"
+                   "[Fixture](../scripts/fixtures/priority_51_49_48.json)\n")
+        self.assertEqual([], check_repository(self.root, build=False))
+        for target in ("../../../evals/skill/b3/ADAPTER_CONTRACT.md", "../scripts/scratch.py"):
+            with self.subTest(target=target):
+                self.write("skills/kc-state-vector/references/self-check.md", f"# Self-check\n\n[Extra]({target})\n")
+                self.assert_rejected(mentions="non-public")
+
+    def test_missing_self_check_members_are_rejected(self):
+        for relative in (*SKILL_KIT_SOURCE_FILES,
+                         "skills/kc-state-vector/references/self-check.md",
+                         "skills/kc-state-vector/references/self-check-examples.md"):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_bytes()
+                path.unlink()
+                self.assert_rejected(mentions=relative)
+                path.write_bytes(original)
+
+    def test_invalid_self_check_json_fixture_is_rejected(self):
+        path = "skills/kc-state-vector/scripts/fixtures/priority_51_49_48.json"
+        for value in ('{"sort_key": }', '{"sort_key": NaN}'):
+            with self.subTest(value=value):
+                self.write(path, value)
+                self.assert_rejected(mentions="invalid JSON fixture")
+
+    def test_unlisted_file_inside_skill_is_not_collected(self):
+        self.write("skills/kc-state-vector/scripts/private-note.txt", "Excluded fixture\n")
+        self.assertEqual([], check_repository(self.root, build=True))
+
     def test_build_uses_only_public_inputs_and_leaves_sources_unchanged(self):
         self.write("unpublished-notes.txt", "This fixture must not enter the build directory.\n")
         builder = (self.root / "skills/build_skill.py").read_text(encoding="utf-8")
@@ -268,7 +304,7 @@ class CheckDocsTests(unittest.TestCase):
             + '\nroot = Path(__file__).resolve().parent.parent\n'
             + 'package = root / "skills" / "kc-state-vector"\n'
             + 'with zipfile.ZipFile(root / "dist" / "kc-state-vector.zip", "w") as archive:\n'
-            + '    for relative in ("SKILL.md", "references/kc-state-vector.md", "LICENSE"):\n'
+            + '    for relative in ARCHIVE_MEMBERS:\n'
             + '        archive.write(package / relative, arcname="kc-state-vector/" + relative)\n',
         )
         self.assert_rejected(build=True, mentions="reproducible")

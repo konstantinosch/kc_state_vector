@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "unread_batch_tail",
+  "records": [
+    {"id": "A", "sort_key": 4},
+    {"id": "B", "sort_key": 3},
+    {"id": "C", "sort_key": 2},
+    {"id": "D", "sort_key": 1}
+  ],
+  "stages": [
+    {"name": "all", "ids": ["A", "B", "C", "D"], "quota": null}
+  ]
+}
