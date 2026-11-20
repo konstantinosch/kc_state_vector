@@ -79,8 +79,10 @@ The original local grouped files and frozen core snapshot are not rewritten.
 
 CI defines separate grouped jobs on Linux and Windows with Python 3.14, running
 the ordinary suite and bounded mutation checks. The full comparison is an opt-in
-command. Local public-only checkout checks passed; hosted results for these new
-jobs await publication. Generated outputs and historical local traces are excluded from Git.
+command. Local public-only checkout checks passed. The initial grouped publication
+also passed documentation and core/grouped jobs on both platforms in
+[GitHub CI](https://github.com/konstantinosch/kc_state_vector/actions/runs/44781368583).
+Generated outputs and historical local traces are excluded from Git.
 The portable skill remains a documentation package and does not acquire these
 executable modules as part of this change.
 
