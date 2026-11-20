@@ -34,7 +34,9 @@ SKILL_MARKDOWN_FILES = ("README.md", "kc-state-vector.md", f"{PACKAGE}/SKILL.md"
                         f"{PACKAGE}/references/kc-state-vector.md")
 SKILL_BUILD_FILES = (*SKILL_MARKDOWN_FILES, "LICENSE", f"{PACKAGE}/LICENSE", "skills/build_skill.py")
 REFERENCE_MARKDOWN_FILES = ("reference/README.md", "reference/VALIDATION.md",
-                            "reference/grouped/README.md", "reference/grouped/VALIDATION.md")
+                            "reference/grouped/README.md", "reference/grouped/VALIDATION.md",
+                            "reference/placement/README.md", "reference/placement/VALIDATION.md",
+                            "reference/placement/FINDINGS.md")
 # Deliberate publication boundary: never discover files recursively from the local
 # workspace or allow an arbitrary file merely because it sits under reference/.
 CORE_REFERENCE_SOURCE_FILES = tuple(f"reference/{name}" for name in (
@@ -58,7 +60,21 @@ GROUPED_REFERENCE_SOURCE_FILES = tuple(f"reference/grouped/{name}" for name in (
     "tests/test_scenarios.py", "tests/test_public_export.py", "tests/test_mutations.py",
     "tests/test_public_boundaries.py",
 ))
-REFERENCE_SOURCE_FILES = (*CORE_REFERENCE_SOURCE_FILES, *GROUPED_REFERENCE_SOURCE_FILES)
+PLACEMENT_REFERENCE_SOURCE_FILES = tuple(f"reference/placement/{name}" for name in (
+    "__init__.py", "protocol.py", "two_way.py", "recompute.py", "adapters.py",
+    "checks.py", "transition_checks.py", "two_way_checks.py", "recompute_checks.py",
+    "scenarios.py", "comparison.py", "mutations.py", "provenance.json",
+    "tests/__init__.py", "tests/test_adapters.py", "tests/test_checks.py",
+    "tests/test_cross_chain.py", "tests/test_fallbacks.py", "tests/test_protocol.py",
+    "tests/test_transitions.py", "tests/test_comparison.py", "tests/test_mutations.py",
+    "tests/test_public_export.py", "tests/two_way/__init__.py",
+    "tests/two_way/fixtures.py", "tests/two_way/test_protocol.py",
+    "tests/two_way/test_checks.py", "tests/recompute/__init__.py",
+    "tests/recompute/fixtures.py", "tests/recompute/test_protocol.py",
+    "tests/recompute/test_checks.py",
+))
+REFERENCE_SOURCE_FILES = (*CORE_REFERENCE_SOURCE_FILES, *GROUPED_REFERENCE_SOURCE_FILES,
+                          *PLACEMENT_REFERENCE_SOURCE_FILES)
 MARKDOWN_FILES = (*SKILL_MARKDOWN_FILES, *REFERENCE_MARKDOWN_FILES)
 PUBLIC_FILES = (*SKILL_BUILD_FILES, *REFERENCE_MARKDOWN_FILES, *REFERENCE_SOURCE_FILES)
 PUBLIC_SUPPORT_FILES = (".gitignore", ".gitattributes", "requirements-checks.txt",

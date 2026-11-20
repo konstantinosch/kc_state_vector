@@ -5,7 +5,7 @@ changes one model fragment in a fresh temporary copy and runs a focused existing
 semantic test. A clean control must pass first. Only assertion failures count as
 detection; crashes, import errors, timeouts and invalid edits fail the tooling.
 
-These eight deliberately wrong implementations are our reproducible regression
+These ten deliberately wrong implementations are our reproducible regression
 catalogue, not a reproduction of another reviewer's unpublished mutation scripts
 or a claim that every possible bug has been tested.
 """
@@ -85,6 +85,28 @@ MUTATIONS = (
         'if (vector["plan"], vector["scope"]) != (self.plan.fingerprint, self.plan.scope):',
         'if False:',
         (REFERENCE + "test_state_binding_rejects_changed_plan_and_scope",)),
+    Mutation(
+        "prune_before_decide", "Advance and prune before deciding whether the current candidate is excluded.",
+        '                claim = self.plan._claims.get(item.id)\n'
+        '                pending = item.id in vector["pending"]\n'
+        '                excluded = item.id in vector["coverage"] or item.id in vector["omitted"]\n'
+        '                reserved = pending and claim.owner != index and index in claim.yielding\n'
+        '                # Decide first; advancing the cursor alone does not make a duplicate safe.\n'
+        '                vector["cursors"][index] = list(item.position)',
+        '                vector["cursors"][index] = list(item.position)\n'
+        '                self._prune(vector)\n'
+        '                claim = self.plan._claims.get(item.id)\n'
+        '                pending = item.id in vector["pending"]\n'
+        '                excluded = item.id in vector["coverage"] or item.id in vector["omitted"]\n'
+        '                reserved = pending and claim.owner != index and index in claim.yielding',
+        (REFERENCE + "test_empty_page_advances_and_has_a_successor",)),
+    Mutation(
+        "cursor_past_unread_batch", "Advance a raw cursor past the unread tail of a partially consumed batch.",
+        '            if vector["stage"] == index and exhausted and processed == len(items):',
+        '            if vector["stage"] == index and buffer is None and processed < len(items):\n'
+        '                vector["cursors"][index] = list(items[-1].position)\n'
+        '            if vector["stage"] == index and exhausted and processed == len(items):',
+        (REFERENCE + "test_ordinary_source_refetches_unconsumed_tail",)),
 )
 
 
@@ -163,7 +185,7 @@ def _run_tests(root: Path, tests: tuple[str, ...], timeout: float, *, mutant: bo
         return {"status": "infrastructure_error", "detail": str(exc)}
 
 
-def run_checks(*, package: Path | None = None, mutations=MUTATIONS, timeout=60) -> dict:
+def run_checks(*, package: Path | None = None, mutations=MUTATIONS, timeout=300) -> dict:
     package = Path(__file__).resolve().parent if package is None else Path(package)
     original = (package / "model.py").read_bytes()
     source = original.decode("utf-8")
@@ -200,7 +222,7 @@ def run_checks(*, package: Path | None = None, mutations=MUTATIONS, timeout=60) 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--timeout", type=float, default=60, help="Seconds per focused subprocess (default: 60)")
+    parser.add_argument("--timeout", type=float, default=300, help="Seconds per focused subprocess (default: 300)")
     parser.add_argument("--json", type=Path, help="Optional complete diagnostic report")
     parser.add_argument("--list", action="store_true", help="List the named variants without running them")
     parser.add_argument("--_worker-report", type=Path, help=argparse.SUPPRESS)

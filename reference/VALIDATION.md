@@ -67,6 +67,20 @@ A surviving valid mutant fails the command. A stale or
 ambiguous edit, syntax error, test error or timeout is a tooling failure, not a kill.
 Healthy controls must pass before mutation results can count.
 
+The current catalogue contains ten named variants. Two continuation-order faults
+use existing semantic regressions, without changing the pager or frozen baseline:
+
+| Mutation | Observable failure checked |
+| --- | --- |
+| `prune_before_decide` | Advance and prune before evaluating the current candidate. After selecting A and B in an earlier stage, the next stage re-emits A where its one-candidate page should be empty with a continuation. |
+| `cursor_past_unread_batch` | Advance a raw cursor to the fetched batch tail despite stopping early. With source A/B/C/D, page size 1 and batch size 3, the first two pages become A/D instead of A/B. |
+
+The first mutation targets the candidate decision, not a potentially equivalent
+reordering during owner completion. The second targets raw-source resumption;
+the separate `retire_at_fetch_cursor` variant still checks premature coverage
+retirement for prepared sources. All ten run through the existing Linux/Windows
+CI command below; no additional workflow is needed.
+
 Run from a clean checkout, without the original local reference or benchmark tree:
 
 ```console
@@ -105,7 +119,9 @@ adapter unless that adapter is checked against the same contracts.
 - Dynamic horizons, changing records/order/eligibility and real engine consistency.
 - Query latency, throughput, index-only execution, bounded lookup cost and working RAM.
 - Authenticated transport, current permissions, hydration and delivery guarantees.
-- Server-side revision coordination, persistent replay, concurrent requests and eviction.
+- The separate [placement module](placement/VALIDATION.md) checks revision coordination,
+  replay, concurrent proposals and state loss using simulated storage. Real persistence
+  and distributed coordination remain outside the reference.
 
 Logical byte/entry checks cover declared state-admission checkpoints, not peak
 process memory or every intermediate assignment. Read-failure rollback preserves

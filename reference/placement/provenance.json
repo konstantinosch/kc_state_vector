@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "scope": "Fixed-data placement over the public core and grouped selectors. One-way inline-or-spill default; optional two-way and digest-verified inline-input recomputation. Simulated storage only.",
+  "origin": "Curated source and test export from the three placement experiments. No local result files, engine benchmarks, ownership/horizon code or frozen archives are package inputs.",
+  "implementation_changes": "The three protocol implementations retain their original AST after import remapping and module docstring changes. Helpers remove horizon-specific paths. The comparison and mutation publication tooling is new.",
+  "files": {
+    "__init__.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "693fc2e9a3f60e00de053b185b4672382c91253fc12a87bca5b8b6961090a8cb",
+      "adaptations": [
+        "Export the one-way Service and Store as the public default."
+      ]
+    },
+    "adapters.py": {
+      "origin": "local_reference/placement_extension/adapters.py",
+      "origin_sha256": "51d152bc7c460bd9355f9f15a0e1820b68b517eab6477d739c9454ec747deb0b",
+      "sha256": "51d152bc7c460bd9355f9f15a0e1820b68b517eab6477d739c9454ec747deb0b",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "checks.py": {
+      "origin": "local_reference/placement_extension/checks.py",
+      "origin_sha256": "063f79ab12e961f5cc0fb1b9baab2e59e185781dfef9f48099e20cd8d6f1187c",
+      "sha256": "13169a23375135607881070e4a46878c1cb4f30958398a2d40972886472107c0",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "comparison.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "4d8f5f0ac076ba2219d7cbab61dedb46cd0aa697cea8996cf5df7a3c19e5b591",
+      "adaptations": [
+        "New same-input comparison of the existing three contracts with actual selectors; separate storage components, replay work and single-response counts; no dynamic-horizon inputs."
+      ]
+    },
+    "mutations.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "ead43b78ecae9ed668b2623c3963469b9ab050570bbbe455e27b4d8b672c69c7",
+      "adaptations": [
+        "Curate the existing 7 one-way, 12 two-way, 10 recompute and 2 cross-chain variants into a public-only isolated mutation runner with healthy controls and strict failure classification.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
+      ]
+    },
+    "protocol.py": {
+      "origin": "local_reference/placement_extension/protocol.py",
+      "origin_sha256": "21c5aafde1575c9036cba77fdbb9fcb07cfec98406a538b6f6cb9b4dc3ba1922",
+      "sha256": "090ffdd7a0e8161564bf51cc903dc9f7cc4e5a841011752c2b0baad773a96422",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "recompute.py": {
+      "origin": "local_reference/recompute_extension/protocol.py",
+      "origin_sha256": "a095522bb451a2fb117786602a84b96c2293538835f96ef544c93361412403f7",
+      "sha256": "3bf1a9998c3722c5fa044efc8f3eb18271bd50d0500039fed5a25539a8ebe5a0",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "recompute_checks.py": {
+      "origin": "local_reference/recompute_extension/checks.py",
+      "origin_sha256": "6611ff4e8330ec93fffa8ed5ae562e391f764e02a7d388ba0df672a44966dbfd",
+      "sha256": "9e4aa8ececd2e8a322d0bd093835ad03cae6e205deda48f1e8765c87a01a964e",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Remove the horizon-specific audit bypass; always audit core/grouped states. Read the optional managed field with a false default for the one-way v1 envelope."
+      ]
+    },
+    "scenarios.py": {
+      "origin": "local_reference/placement_extension/scenarios.py",
+      "origin_sha256": "f3ebb7f9b92ffc618d319acbaf2a21248bef24adfd1ce29d0da216fe6eabb589",
+      "sha256": "63541bc00762fde8e5a700a5ebbee1d0b75fb738e11ff8d9a3f4b2075018839d",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Extract the existing two-growth-cycle fixture from the two-way runner; no new selector semantics."
+      ]
+    },
+    "tests/__init__.py": {
+      "origin": "local_reference/placement_extension/tests/__init__.py",
+      "origin_sha256": "1b3db48df52b42df0765aa49bfade0ca7df3319867b21ca7452342916bf8a356",
+      "sha256": "1b3db48df52b42df0765aa49bfade0ca7df3319867b21ca7452342916bf8a356",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/recompute/__init__.py": {
+      "origin": "local_reference/recompute_extension/tests/__init__.py",
+      "origin_sha256": "23e5db989c43d3215a9f35f48877982edf02ebe80beaa31527f33030d4d8cd82",
+      "sha256": "23e5db989c43d3215a9f35f48877982edf02ebe80beaa31527f33030d4d8cd82",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/recompute/fixtures.py": {
+      "origin": "local_reference/recompute_extension/tests/fixtures.py",
+      "origin_sha256": "138d9a2fb32f40b769aeb128ea7a2333b0798a035b7012970288a77b1e50c222",
+      "sha256": "1cd99ec38481084cec222df3bf1ab1ae1f98e4c691f519fe248332271c1231c3",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/recompute/test_checks.py": {
+      "origin": "local_reference/recompute_extension/tests/test_checks.py",
+      "origin_sha256": "f6b01bf56a9d979343259346638c5b6d688cbe553a3b2fde882ea4c998a6a2a3",
+      "sha256": "8a4561fe357bf7dc76e87f17e95f606217dbbabe4d3375d105c579b79484be99",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/recompute/test_protocol.py": {
+      "origin": "local_reference/recompute_extension/tests/test_protocol.py",
+      "origin_sha256": "5f2afc8afb9a30e69157be23743cb6a3b3c5f7f23500dd2d5a92120dcc84e7a8",
+      "sha256": "7466c2661b4e4ab97b2c8b6e94b04bb1c97eb4953720e699d62841c79144bf73",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/test_adapters.py": {
+      "origin": "local_reference/placement_extension/tests/test_adapters.py",
+      "origin_sha256": "b63b7fed5493889bb5f1928d9daa9ca68288c085097c682910b340a29a5dffaa",
+      "sha256": "eb736576610f0b21ce373bd147d246c29153f4f9118e7892004ace89c85a4c01",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/test_checks.py": {
+      "origin": "local_reference/placement_extension/tests/test_checks.py",
+      "origin_sha256": "928956228869e89c90041b412e161ce9001bcf4915b911c4b6bc1d2e2fdc86ac",
+      "sha256": "5e4a35627213ec99f932fdaae48fc1c167f1a8b24f42361f2460c3dda64929a3",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Retain fraction/terminal denominator assertions without importing the historical report renderer; the public comparison tests cover the new renderer."
+      ]
+    },
+    "tests/test_comparison.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "4da805c2f6527d3a0e49b0f481cadc75b110d74d77bff1aa7ce74ef318a17292",
+      "adaptations": [
+        "New comparison, actual-selector, storage partition, reporting and runner safeguards."
+      ]
+    },
+    "tests/test_cross_chain.py": {
+      "origin": "local_reference/placement_extension/tests/test_cross_chain.py",
+      "origin_sha256": "762d9e2ad0b1d0c797e78e9fe4da104309bb2da51b65cc0a8817b8cb736cfadb",
+      "sha256": "d6387de77ee8d7d71a58715224d7346ce7962f313aeee7b2313359a0ee2e1714",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/test_fallbacks.py": {
+      "origin": "local_reference/placement_extension/tests/test_fallbacks.py",
+      "origin_sha256": "fda252a860dd3ab0afb86d3e26adc8186d72ece3a3775de5e3dac549a62e694e",
+      "sha256": "d3cb8964cfeba87bf71ba52b80240a8602aa5444149a17e2d9d32c1bea6c8528",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/test_mutations.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "e208575d066865899132a8e2ccae4c45cb91778b9c2c3088834741596ef24e8b",
+      "adaptations": [
+        "New public mutation-tool controls for invalid edits, survivors, errors, timeouts and isolation."
+      ]
+    },
+    "tests/test_protocol.py": {
+      "origin": "local_reference/placement_extension/tests/test_protocol.py",
+      "origin_sha256": "ca53668b6e3b63c7d09caafb4304f9e5fbb91c1c26e40abb32cfedf0c0fe0a01",
+      "sha256": "e3df6d11c58d81d3ff216e517a76297527c08c1505d3d33e9c43e05c27eb4426",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/test_public_export.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "sha256": "45b351060bfe166ac5571e3794bc7612dfcd040833949ef5d69dfb2df1075d53",
+      "adaptations": [
+        "New manifest, public-only dependency, clean-copy and optimized-execution checks.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
+      ]
+    },
+    "tests/test_transitions.py": {
+      "origin": "local_reference/placement_extension/tests/test_transitions.py",
+      "origin_sha256": "e8e9312ffc1e0ab4c94963dae6a698a18c6032d58b69b41861c61d4bee9e7c30",
+      "sha256": "8470f2b8b5f27ec452095689dfd093f26cb5634b94797c33e5d4712882867458",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Use the public transition_checks location for those retained reporting/calibration helpers."
+      ]
+    },
+    "tests/two_way/__init__.py": {
+      "origin": "local_reference/two_way_extension/tests/__init__.py",
+      "origin_sha256": "6ee15a8a8d12fc0847699fce3579e82d3e3e72deb8994d38514b0067a696db65",
+      "sha256": "0bfb133831bd819a18626d8f94a2d03a438c0f53141cd9f8c712554ebb8b616c",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/two_way/fixtures.py": {
+      "origin": "local_reference/two_way_extension/tests/fixtures.py",
+      "origin_sha256": "f93a452b58eb880dbd83838418ac20dc876c80a72a363a8dcddf46c8df775019",
+      "sha256": "e90f76308d5621b5e7cec79198438c66b204721fba84214a06938b5a5b4aa521",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/two_way/test_checks.py": {
+      "origin": "local_reference/two_way_extension/tests/test_checks.py",
+      "origin_sha256": "ca13e8211111e4cc7ff6061aefc46b1cd40b0c40f599bbd944f9ddb81f2dbc70",
+      "sha256": "c8f1f82d909eafb8b93131d3a3fdbe2ed16c1706ff97777694df2e4422490d0a",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "tests/two_way/test_protocol.py": {
+      "origin": "local_reference/two_way_extension/tests/test_protocol.py",
+      "origin_sha256": "b1b32fa65c420b6d5aedcd63e48840e91cb240b0c3a61a08d67149b71b0972a1",
+      "sha256": "b9fdbd5d41b39963fed8ea92436e4877ae761f48a9a7cf19683d6f56bca83537",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "transition_checks.py": {
+      "origin": "local_reference/placement_extension/transition_checks.py",
+      "origin_sha256": "d460ce3c9b1004802ac4bd583659b80607ff50ad573183d66a135d33479d1e39",
+      "sha256": "33f1e4c461e457facbe0527aba20f411872e0e669613ecdb8a348c20b76329e7",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Also retain calibrated_threshold and summarize from the existing transition_runs helper."
+      ]
+    },
+    "two_way.py": {
+      "origin": "local_reference/two_way_extension/protocol.py",
+      "origin_sha256": "7a0838940d506955b9527b827c214ec037db87a1e3ce475b525a945bb670bb3d",
+      "sha256": "6f00bafb4bf53144509330334479b3a1e8ee230f5dd000c0d3df63b681e428a0",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions."
+      ]
+    },
+    "two_way_checks.py": {
+      "origin": "local_reference/two_way_extension/checks.py",
+      "origin_sha256": "7e9bf7071076ce781cb033fb2be5ef3c652e699edeec255d746982f8349f9e02",
+      "sha256": "9c574ec17ed69a76e7aaf12e5b3b26ac0297e7335f673582b4c2c14e90c59f54",
+      "adaptations": [
+        "Use public reference imports and test targets; update package descriptions.",
+        "Remove the dynamic-horizon import and alternative baseline branch; retain the core/grouped checks."
+      ]
+    }
+  }
+}

@@ -187,17 +187,20 @@
     },
     "tests/test_public_export.py": {
       "origin": null,
-      "sha256": "58efc9186bc8a17cfe3c83ef7aa44402861c7ef6c7cb37ade5e595ab095a108c",
+      "sha256": "ba8ae69cc395cbb374f113b6ccae6fc18a724a12c3a79b199cd99088a3e01075",
       "adaptations": [
         "New publication checks for export integrity, copied semantic modules, independent legacy helpers and isolated oracle execution.",
-        "Add subprocess regressions for optimized imports and runners, plus normal prepared-page resume."
+        "Add subprocess regressions for optimized imports and runners, plus normal prepared-page resume.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
       ]
     },
     "mutations.py": {
       "origin": null,
-      "sha256": "5f0861dec05363f99d9ca9bdadd82445ce26513d575e66225e2b38bcaf872356",
+      "sha256": "eeb787a49a2b0fb0214e1b3a6dc50ea6778028a49d2026c239f13a0816543744",
       "adaptations": [
-        "New isolated named-mutation runner with clean controls, exact source edits and assertion-only detection."
+        "New isolated named-mutation runner with clean controls, exact source edits and assertion-only detection.",
+        "Add prune_before_decide and cursor_past_unread_batch, detected by existing empty-page and raw unread-tail behavioral tests; mutation worker and pager unchanged.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
       ]
     },
     "tests/test_mutations.py": {

@@ -27,7 +27,7 @@ class PublicExportTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, '-X', 'utf8', '-S', '-B', *flags, *arguments],
             cwd=ROOT.parent.parent, env=environment, capture_output=True,
-            text=True, encoding='utf-8', timeout=30,
+            text=True, encoding='utf-8', timeout=300,
         )
 
     def _one_case(self, runner):

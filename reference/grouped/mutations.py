@@ -96,7 +96,7 @@ MUTATIONS = (
 )
 
 
-def run_checks(*, package=None, mutations=MUTATIONS, timeout=60):
+def run_checks(*, package=None, mutations=MUTATIONS, timeout=300):
     """Check a public reference package; shared worker utilities enforce controls."""
     package = Path(__file__).resolve().parents[1] if package is None else Path(package)
     grouped = package / 'grouped'
@@ -139,7 +139,7 @@ def run_checks(*, package=None, mutations=MUTATIONS, timeout=60):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--timeout', type=float, default=60, help='Seconds per focused subprocess')
+    parser.add_argument('--timeout', type=float, default=300, help='Seconds per focused subprocess (default: 300)')
     parser.add_argument('--json', type=Path, help='Optional diagnostic file outside the reference package')
     parser.add_argument('--list', action='store_true', help='List faults without running them')
     args = parser.parse_args(argv)

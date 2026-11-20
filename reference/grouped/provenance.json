@@ -60,9 +60,10 @@
       "origin": null,
       "origin_sha256": null,
       "adaptations": [
-        "New isolated semantic mutation runner for ten deliberate grouped coverage and reservation faults; no hash-only detections."
+        "New isolated semantic mutation runner for ten deliberate grouped coverage and reservation faults; no hash-only detections.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
       ],
-      "sha256": "e67cac0173d561df978a2424bff894f4061f0313cc271630c375e559af2c3250"
+      "sha256": "ad6c10ac3a2bd4272efeb321caea8b8579c548731f3069b29967873992dc96d5"
     },
     "oracle.py": {
       "origin": "local_reference/grouped_extension/oracle.py",
@@ -187,9 +188,10 @@
       "origin": null,
       "origin_sha256": null,
       "adaptations": [
-        "New public provenance, CLI, optimization guard, output-location and explicit preceding-evidence regression tests."
+        "New public provenance, CLI, optimization guard, output-location and explicit preceding-evidence regression tests.",
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
       ],
-      "sha256": "06e23527a43f36383d8afbfe4e715c04dbc2087983c930e67ca9a93ec54f3d4f"
+      "sha256": "4fa1c5650ddb20bdb4fe9d41af81ff6a338f8965caf033ddfa4e46c92dc77cc4"
     },
     "tests/test_reporting.py": {
       "origin": "local_reference/grouped_extension/tests/test_reporting.py",

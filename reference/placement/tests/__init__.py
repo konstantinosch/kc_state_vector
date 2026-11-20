@@ -1,0 +1,1 @@
+"""Local placement contract tests."""

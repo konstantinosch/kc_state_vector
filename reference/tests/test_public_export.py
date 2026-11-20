@@ -36,7 +36,7 @@ class PublicExportTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, '-X', 'utf8', '-S', '-B', *flags, *arguments],
             cwd=ROOT.parent, env=environment, capture_output=True,
-            text=True, encoding='utf-8', timeout=30,
+            text=True, encoding='utf-8', timeout=300,
         )
 
     def test_optimized_import_is_rejected_before_loading_model(self):

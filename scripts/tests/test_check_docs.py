@@ -40,6 +40,9 @@ class CheckDocsTests(unittest.TestCase):
         self.write("reference/VALIDATION.md", "# Validation\n\n## Scope\n\nFixed finite inputs.\n")
         self.write("reference/grouped/README.md", "# Grouped reference\n\n[Scope](VALIDATION.md#scope)\n")
         self.write("reference/grouped/VALIDATION.md", "# Grouped validation\n\n## Scope\n\nFixed group membership.\n")
+        self.write("reference/placement/README.md", "# Placement reference\n\n[Scope](VALIDATION.md#scope)\n")
+        self.write("reference/placement/VALIDATION.md", "# Placement validation\n\n## Scope\n\nSimulated fixed-data storage.\n")
+        self.write("reference/placement/FINDINGS.md", "# Placement findings\n\nSynthetic comparisons.\n")
         for relative in REFERENCE_SOURCE_FILES:
             self.write(relative, "# Public reference fixture\n")
 
@@ -161,7 +164,10 @@ class CheckDocsTests(unittest.TestCase):
     def test_missing_public_reference_inputs_are_rejected(self):
         for relative in ("reference/VALIDATION.md", "reference/oracle.py",
                          "reference/tests/test_reference.py", "reference/grouped/VALIDATION.md",
-                         "reference/grouped/oracle.py", "reference/grouped/tests/test_public_boundaries.py"):
+                         "reference/grouped/oracle.py", "reference/grouped/tests/test_public_boundaries.py",
+                         "reference/placement/VALIDATION.md", "reference/placement/FINDINGS.md",
+                         "reference/placement/protocol.py", "reference/placement/recompute.py",
+                         "reference/placement/tests/test_public_export.py"):
             with self.subTest(relative=relative):
                 path = self.root / relative
                 original = path.read_bytes()
@@ -189,6 +195,20 @@ class CheckDocsTests(unittest.TestCase):
                        "../results/grouped/comparison.json", "ownership_extension/pager.py"):
             with self.subTest(target=target):
                 self.write("reference/grouped/README.md", f"# Grouped reference\n\n[Extra]({target})\n")
+                self.assert_rejected(mentions="non-public")
+
+    def test_placement_links_resolve_without_local_research_or_reports(self):
+        self.write("reference/README.md", "# Reference\n\n[Placement](placement/README.md)\n")
+        self.write("reference/placement/README.md", "# Placement reference\n\n"
+                   "[Core](../README.md)\n[Scope](VALIDATION.md#scope)\n"
+                   "[Results](FINDINGS.md)\n[Default](protocol.py)\n"
+                   "[Optional](recompute.py)\n[Tests](tests/test_comparison.py)\n")
+        self.assertEqual([], check_repository(self.root, build=False))
+        for target in ("../../local_reference/placement_extension/protocol.py",
+                       "../../local_reference/horizon_extension/model.py",
+                       "../results/placement/comparison.json", "scratch.py"):
+            with self.subTest(target=target):
+                self.write("reference/placement/README.md", f"# Placement\n\n[Extra]({target})\n")
                 self.assert_rejected(mentions="non-public")
 
     def test_build_uses_only_public_inputs_and_leaves_sources_unchanged(self):

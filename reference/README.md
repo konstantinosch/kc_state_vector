@@ -96,9 +96,15 @@ rows, fixed spans and hybrid coverage with explicit-ID reservations. It has its
 own oracle, fixtures and [validation scope](grouped/VALIDATION.md). Its raw-source
 model does not combine grouping with the prepared buffers validated by this core.
 
-Compressed reservations, dynamic horizons, live data, hydration, real source
-adapters and server-held revision protocols remain outside these implementations.
-Their discussion in the pattern does not imply validation here. Engine benchmarks
-and the remaining local experiments are not part of this package.
+The optional [placement module](placement/README.md) wraps these selectors in a
+simulated continuation protocol. One-way inline-or-spill is its default; two-way
+placement and digest-verified recomputation are explicit options. Its tests cover
+revision coordination, retries and declared state-loss policies. Its in-memory
+store does not establish real storage durability or distributed coordination.
+
+Compressed reservations, dynamic horizons, live data, hydration and real source
+adapters remain outside these implementations. Their discussion in the pattern
+does not imply validation here. Engine benchmarks and the remaining local
+experiments are not part of this package.
 
 This code is covered by the repository's [MIT license](../LICENSE).
