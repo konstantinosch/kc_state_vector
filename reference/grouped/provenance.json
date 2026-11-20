@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "scope": "Fixed finite grouped coverage with explicit-ID reservation ownership, ID/span/hybrid selected coverage and supplied immutable episodes. This is a separate extension; the frozen core baseline is unchanged.",
+  "origin": "Curated export from local_reference/grouped_extension; all 72 existing semantic/report tests retained. No generated reports, benchmark data or frozen archives included.",
+  "implementation_changes": "Pager behavior, coverage encoding and independent oracle logic are preserved; model imports use the public core. Only packaging, public commands and optional explicit preceding-evidence handling changed.",
+  "files": {
+    "__init__.py": {
+      "origin": "local_reference/grouped_extension/__init__.py",
+      "origin_sha256": "9a7648f8c050d38cdfc8b3f4939d4f88cbd6fe6acaa660445929229f0ad68e64",
+      "sha256": "ede51ae637be16d46cfd1ec9b0a59f579d71b821c714db8f26c3e5cb2fceb9f7",
+      "adaptations": [
+        "Describe the curated public reference instead of local research."
+      ]
+    },
+    "__main__.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "adaptations": [
+        "New worked-example command: both partial reservation policies, all three coverage encodings, per-boundary audit and final independent oracle check."
+      ],
+      "sha256": "57ab250b23da9915ccc86d3205be5d248d58924497d4b2ba5f507e1a5cdcdeee"
+    },
+    "audit.py": {
+      "origin": "local_reference/grouped_extension/audit.py",
+      "origin_sha256": "e3020c2bc4e4f40d759ca4cc237404933ede94176d51dce00683767f6dc21dcf",
+      "sha256": "e3020c2bc4e4f40d759ca4cc237404933ede94176d51dce00683767f6dc21dcf",
+      "adaptations": []
+    },
+    "coverage.py": {
+      "origin": "local_reference/grouped_extension/coverage.py",
+      "origin_sha256": "1e358ea2614b3bb6684896fec1992bb3d431c534421f233ca17a59aaad4b15ab",
+      "sha256": "1e358ea2614b3bb6684896fec1992bb3d431c534421f233ca17a59aaad4b15ab",
+      "adaptations": []
+    },
+    "generated.py": {
+      "origin": "local_reference/grouped_extension/generated.py",
+      "origin_sha256": "00be75ad26c65105b6a686e583b398bd24f49aef701174b6c8e86a105317309c",
+      "sha256": "b5a8477a1b28372833b2453a74354669bbd33440577a32eab128c562fb9a6efa",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "hybrid_scenarios.py": {
+      "origin": "local_reference/grouped_extension/hybrid_scenarios.py",
+      "origin_sha256": "f1afacf9b98f6b7c2f003e249d24e7855f0700a3805ccffc5e2b67ff153206a1",
+      "sha256": "dd5794ae170c6dc3d8904f44ec435fb95f5e7811c1712a979f81dffd371b9288",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "model.py": {
+      "origin": "local_reference/grouped_extension/model.py",
+      "origin_sha256": "c8e292eb7332a597fac1934531f5ceb07d65916a1c05c1d552c990f29722c647",
+      "sha256": "3f7e571633af44ecdfeadfeb27ea5903682def19fc15517a7f3f27e6e9359148",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "mutations.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "adaptations": [
+        "New isolated semantic mutation runner for ten deliberate grouped coverage and reservation faults; no hash-only detections."
+      ],
+      "sha256": "e67cac0173d561df978a2424bff894f4061f0313cc271630c375e559af2c3250"
+    },
+    "oracle.py": {
+      "origin": "local_reference/grouped_extension/oracle.py",
+      "origin_sha256": "57307743b1548860a57f290b8f3c94e24b1c66d86446b90000b560fc3576e55a",
+      "sha256": "57307743b1548860a57f290b8f3c94e24b1c66d86446b90000b560fc3576e55a",
+      "adaptations": []
+    },
+    "reporting.py": {
+      "origin": "local_reference/grouped_extension/reporting.py",
+      "origin_sha256": "1771707fcfacd5b0d69a7574a94449eb959f288789240fd92c6d668d55473e64",
+      "sha256": "8a3cdee30a3457a9133b2fffea34a22b5fc18db9c3ef3532bf1cf7440a7643d9",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets.",
+        "Describe optional preceding evidence accurately and use public reproduction commands without local frozen-archive dependencies."
+      ]
+    },
+    "run_checks.py": {
+      "origin": "local_reference/grouped_extension/run_checks.py",
+      "origin_sha256": "3159645287e5f2ed8078ce3e8cb4aeb1c2932ba9f7591e98cd9ad3792010f948",
+      "sha256": "04d8626ff2924e54466c500d121d879b011de7066170f51203a831c9aeb6f6a5",
+      "adaptations": [
+        "Default explicit report generation to ignored reference/results/grouped/ids-spans; update public commands, scope and report prose."
+      ]
+    },
+    "run_hybrid_checks.py": {
+      "origin": "local_reference/grouped_extension/run_hybrid_checks.py",
+      "origin_sha256": "9cae49b021f388a16e35de4949f13c07cc2e0168bf469ca26f8e687e9d298dee",
+      "sha256": "8c6041e57c388a1387c1c64a5cbe501afd79e9dbf67c7422ed29b07fbe6ea854",
+      "adaptations": [
+        "Normalize Python source newlines to LF for cross-platform checkout.",
+        "Default explicit report generation to ignored reference/results/grouped/hybrid; replace implicit local historical reads with optional --previous-comparison, preserve/hash that input, reject overwriting it, and update public scope.",
+        "When comparing a current two-mode report, allow its declared representations list to add hybrid while requiring all ID/span metrics to match; old reports without this metadata remain supported."
+      ]
+    },
+    "scenarios.py": {
+      "origin": "local_reference/grouped_extension/scenarios.py",
+      "origin_sha256": "5ceefe6b7d8d5781abd0bba8238cd6fe89096449d0bb4ea8bc9cec0a6e9366f0",
+      "sha256": "93f54f6849dfc5ca9f58ca422b730d6d3fb7934635eb6a4e5281c3e7f60b7559",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/__init__.py": {
+      "origin": "local_reference/grouped_extension/tests/__init__.py",
+      "origin_sha256": "9d9ce2b38dc81ad68edec1d8b3b96b87a2a684cc0394c400e7c09fb841a0dc0f",
+      "sha256": "9d9ce2b38dc81ad68edec1d8b3b96b87a2a684cc0394c400e7c09fb841a0dc0f",
+      "adaptations": []
+    },
+    "tests/test_audit.py": {
+      "origin": "local_reference/grouped_extension/tests/test_audit.py",
+      "origin_sha256": "4c594faf1be9fd09edc7eeb1c63b3fb2203416fc334f58467321f15cc806b159",
+      "sha256": "a3f7fedf27fdc0b1690a16bb67df919ddb3b35e013bb32875e2e845bef98de6c",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_contract.py": {
+      "origin": "local_reference/grouped_extension/tests/test_contract.py",
+      "origin_sha256": "09095e9c59aaab4d392bc9a22f58a96abe1d28280884aae4f05fc3f723fe42bd",
+      "sha256": "82cec147cc965c33fc509ee9a19873ed4842faa0c8556c86edc3de213e73cbc2",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_coverage.py": {
+      "origin": "local_reference/grouped_extension/tests/test_coverage.py",
+      "origin_sha256": "a8d0e206e37df00fa49927da0c73478b798ef1497182a09763aa04893912dac8",
+      "sha256": "3789e79d542e379fae852db993043aba2d97210f3a57e888612611be97e1f665",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_hybrid_audit.py": {
+      "origin": "local_reference/grouped_extension/tests/test_hybrid_audit.py",
+      "origin_sha256": "8e08b68bee9beac9b98efe239288dde1334d51e8cf324373e917e619439e035f",
+      "sha256": "429d68388c0637376ab4dae09f1775614412bdd4271ca02959ac3b6e29eadb22",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_hybrid_coverage.py": {
+      "origin": "local_reference/grouped_extension/tests/test_hybrid_coverage.py",
+      "origin_sha256": "c12944169188989cf81b18a1656475f5aa79fd3909a414215532abf3aa12a068",
+      "sha256": "77d6f46a18c06da5c3a3babb9a2bdb5241129bd5dfbe14acceab91590dbc39d8",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_hybrid_pager.py": {
+      "origin": "local_reference/grouped_extension/tests/test_hybrid_pager.py",
+      "origin_sha256": "7170546bba98eff5b7903b9ecb5a6e31ebb8de108b8b38535436a4cdb63da7e4",
+      "sha256": "693ee06fb21cb47bfc8d43504ac411465db6abe72e1809d4de3ae6f7ef58638c",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_mutations.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "adaptations": [
+        "New mutation-tool controls: healthy control, required tests, assertion failures only, survival/errors fail, and source preservation."
+      ],
+      "sha256": "db6715ce6824b7525bb0ae333b24b73fafc7ab9821e6fbba0cc2e18d97f60f15"
+    },
+    "tests/test_pager.py": {
+      "origin": "local_reference/grouped_extension/tests/test_pager.py",
+      "origin_sha256": "7d1b00d2088bb5abfffe9bdb2a0e32068a12c535967e1798def6945030c94fb4",
+      "sha256": "28fdd7d7e3b5aa78fd64d1a13d3c41366b962087b893d03f9dd52dec12603a87",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_public_boundaries.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "adaptations": [
+        "New bounded matrix for every observed read failure, incomplete read and returned-state byte/entry boundary with replay and fresh-pager retries."
+      ],
+      "sha256": "baef3a6797df4e71ec9a1a53c0ae470ec198837ea5acb63031edc749d4b18629"
+    },
+    "tests/test_public_export.py": {
+      "origin": null,
+      "origin_sha256": null,
+      "adaptations": [
+        "New public provenance, CLI, optimization guard, output-location and explicit preceding-evidence regression tests."
+      ],
+      "sha256": "06e23527a43f36383d8afbfe4e715c04dbc2087983c930e67ca9a93ec54f3d4f"
+    },
+    "tests/test_reporting.py": {
+      "origin": "local_reference/grouped_extension/tests/test_reporting.py",
+      "origin_sha256": "ecb51f1d1f9d263df5db145e0a717f51406aa4269d059d84241bf9595cb2c547",
+      "sha256": "1f8684785350ccef36a54790bbb33246eb5ddaa2074c00d33df1652d8204a479",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    },
+    "tests/test_scenarios.py": {
+      "origin": "local_reference/grouped_extension/tests/test_scenarios.py",
+      "origin_sha256": "7bdcba41324c937c8e43e98896610b544973b0030d9e331ba7e35ad53541e4d4",
+      "sha256": "3cab628e46d06366cd9b2a3c089ac8027192d8fe9dd9d59dd2b8805d3233655b",
+      "adaptations": [
+        "Use the public reference package in imports and patch targets."
+      ]
+    }
+  }
+}
