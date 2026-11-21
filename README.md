@@ -52,7 +52,11 @@ The original application demonstrated the staged-feed core. Server-held continua
 
 Reports of duplicates or skipped rows under the stated exact-traversal conditions are welcome, ideally with the smallest reproducing sequence of pages.
 
-A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern. Build it with `python skills/build_skill.py`; [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging. Generated archives stay local.
+A [portable agent skill](./skills/kc-state-vector/SKILL.md) bundles the pattern and a [stdlib self-check kit](./skills/kc-state-vector/references/self-check.md) for fixed-data, ungrouped staged pagers. The kit provides an independent oracle, synthetic fixtures and checks for ordering, overlap, quotas, continuation and retries.
+
+A local follow-through evaluation used 12 authored prompts, three fresh samples per prompt, and one Codex model to review scope decisions and generate staged-core pagers checked with the kit. Inputs explicitly required reading the full skill and included a word target. There was no skill-off control or Claude-model run, so this does not isolate the skill's contribution or establish production guarantees.
+
+Build the skill with `python skills/build_skill.py`; [CI](./.github/workflows/checks.yml) checks links, examples, metadata, bundled copies and reproducible packaging. Generated archives stay local.
 
 ## Acknowledgements
 
