@@ -179,10 +179,11 @@
     "tests/test_public_export.py": {
       "origin": null,
       "origin_sha256": null,
-      "sha256": "45b351060bfe166ac5571e3794bc7612dfcd040833949ef5d69dfb2df1075d53",
+      "sha256": "a080c156724f2c272479b39a553f735832e739a0e5d57ab962fd2b37001c62b2",
       "adaptations": [
         "New manifest, public-only dependency, clean-copy and optimized-execution checks.",
-        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures.",
+        "Update the private-import guard for the renamed pagerbench package and the enclosing benchmarks namespace."
       ]
     },
     "tests/test_transitions.py": {

@@ -133,7 +133,7 @@ from types import SimpleNamespace as NS
 
 class NoImplementationImports:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'reference', 'local_reference', 'review_checks', 'mailbench'}:
+        if fullname.split('.')[0] in {'reference', 'local_reference', 'review_checks', 'pagerbench', 'benchmarks'}:
             raise AssertionError('oracle imported implementation: ' + fullname)
 
 sys.meta_path.insert(0, NoImplementationImports())

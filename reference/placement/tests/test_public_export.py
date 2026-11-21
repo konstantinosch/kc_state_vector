@@ -31,7 +31,7 @@ class PublicPlacementExportTests(unittest.TestCase):
                                  entry["sha256"])
 
     def test_placement_has_no_private_imports(self):
-        forbidden = ("local_reference", "mailbench", "review_checks")
+        forbidden = ("local_reference", "pagerbench", "benchmarks", "review_checks")
         for source in (REFERENCE_ROOT / "placement").rglob("*.py"):
             if any(part in ("results", "runs", "__pycache__") for part in source.parts):
                 continue

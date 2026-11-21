@@ -187,11 +187,12 @@
     },
     "tests/test_public_export.py": {
       "origin": null,
-      "sha256": "ba8ae69cc395cbb374f113b6ccae6fc18a724a12c3a79b199cd99088a3e01075",
+      "sha256": "21a317ca4996bc3982e7ebbf49a0ded290f77d339149928e3faf692b4fdf8154",
       "adaptations": [
         "New publication checks for export integrity, copied semantic modules, independent legacy helpers and isolated oracle execution.",
         "Add subprocess regressions for optimized imports and runners, plus normal prepared-page resume.",
-        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures."
+        "Raise subprocess timeout allowances to 300 seconds for shared CI runners; timeout failures remain tooling failures.",
+        "Update the private-import guard for the renamed pagerbench package and the enclosing benchmarks namespace."
       ]
     },
     "mutations.py": {
