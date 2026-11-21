@@ -346,12 +346,15 @@ window on each page. The server still defines the window rule and validates its 
   under the [count-horizon transition rule](#the-count-horizon).
 - **Both:** an entry ends at whichever comes first.
 
-**A recency or count window bounds its own exclusions.** Every entry such a stage creates lies
-inside its window, so once the later stages scan past the window's edge, all of them have
-expired. A state window ("open") is spread across the whole order, so its entries expire like any
-other. And when the later stages can test the window's condition themselves, they exclude the
-whole stage by predicate (rule 6, in one of the two forms of "The result a plan defines")
-and carry nothing — S4 does that with S2's labels in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages).
+**A recency or count window can provide a pruning boundary.** If represented members stay
+inside that window, its coverage can retire after all remaining scans pass the edge only when
+no future group expansion or pending ownership decision can need it. A grouped row may represent
+members outside its candidate window; apply the [general reachability rule](#exclusions-describe-sets-of-items)
+to the full represented set. Passing the window's edge alone is insufficient. A state window
+("open") is spread across the whole order, so it supplies no single position boundary.
+When later stages can reproduce the window's eligibility, a predicate may replace explicit
+entries under one of the two contracts in [the result a plan defines](#the-result-a-plan-defines).
+S4 uses S2's whole-category quota in the [four-stage trace](#how-it-evolves--four-stages-over-five-pages).
 
 **With a compact group representation, each selected row can create one exclusion entry.**
 Expanding a represented group into individual item exclusions can create many entries instead.
@@ -552,20 +555,25 @@ implementation loads and validates the stored vector before selection, then publ
 through the revision and replay contract under [integration and reference](#part-4--integration-and-reference) instead of serializing the vector to the client.
 
 ```
+finish current stage:
+    resolve its pending reservations under its fallback policy while coverage is still available
+    mark it done; retain any terminal consumed cursor still needed; move to the next stage
+settle spent quotas:
+    while a stage remains and its selection quota is spent: finish current stage
+
 validate the vector (signature, version, then every field)
 work on a tentative copy; remaining = the positive request candidate budget
+settle spent quotas
 while the page is not full and a stage remains and remaining > 0:
     want = min(room left on the page, the stage's budget left)
-    if want = 0:
-        resolve the stage's pending reservations under its declared completion/fallback policy
-        mark the stage done; move to the next stage; continue
+    batchStage = current stage
     ensure reservations affecting this scan are established; reuse any already prepared state
     entering a stage: prepare its source if not loaded, or refill its buffer as declared
     K = min(chosen batch size, remaining)
     batch, exhausted = source below its consumed cursor, within the anchor and scope,
                        with equivalent pushed-down exclusions, in order, LIMIT K
     for each candidate c in batch, in order:
-        if the page is full or the stage's budget is spent or remaining = 0: stop
+        if the page is full or remaining = 0 or current stage != batchStage: stop
         the stage's cursor = c; remaining -= 1                 -- served or skipped
         apply the plan's declared horizon transitions
         recheck exclusions and applicable reservations, including changes earlier in this batch
@@ -574,15 +582,18 @@ while the page is not full and a stage remains and remaining > 0:
         else:
             serve c; resolve any reservation it owns
             record coverage needed by remaining scans; update prepared lists and counters
-        after c's decision, prune coverage no remaining consumer can encounter
+        settle spent quotas
+        if current stage = batchStage and its prepared buffer is exhausted and empty:
+            finish current stage; settle spent quotas
+        prune coverage no remaining consumer can encounter
         enforce the declared state-cap policy at this candidate boundary
         if exact state cannot fit: discard this tentative page; return a capacity error
-    if the stage's budget is spent or (exhausted and batch wholly consumed):
-        resolve the stage's pending reservations under its declared completion/fallback policy
-        mark the stage done; retain any terminal cursor still needed; move to the next stage
+    if current stage = batchStage and exhausted and batch wholly consumed:
+        finish current stage; settle spent quotas
+        prune safely; enforce capacity, or discard this tentative page and return a capacity error
 drop every exclusion no remaining stage can meet any more
 hasMore = a stage remains                              -- may be true even if no row will survive
-check the final token byte budget; on overflow return a capacity error, never trim at serialization
+if hasMore: check the final token byte budget; on overflow return a capacity error, never trim
 hydrate the completed selection in batches → present → deliver
 return the page and, only if hasMore, its continuation token
 ```
@@ -1164,12 +1175,14 @@ request. Bind the full relevant access state, not just partitions if item-level 
   **served**, not when someone opens it. Its items are hydrated on demand: the newest few and a
   count with the row, the rest when the row is expanded — a presentation step, outside the vector
   (rule 10).
-- **Groups merged mid-chain.** If a group not yet shown is merged into one already shown, its
-  items now carry the shown one's key and are skipped until a refresh. A live refresh of the shown
-  row may expose the changed members. Merges and splits change the result definition; do not apply
-  the fixed-data exactness guarantee to them, especially when repeats consume finite budgets.
-- **Compact exclusions need a numeric group number** ([Optimization — compact exclusions](#optimization--compact-exclusions)). String keys remain literal. Numeric IDs may delta-compress well when they correlate
-  with expiry order, but filters, visibility and backfills can break that correlation; measure it.
+- **Groups merged mid-chain.** Merged-in members are suppressed only if retained coverage still
+  applies to their current keys and positions. A retired entry or an existing span may not cover
+  them. Merges and splits require a declared live-change policy or a restart; the fixed-data
+  exactness guarantee does not cover them. A live refresh of a displayed row can expose changed
+  members, but does not reconcile the chain's coverage or finite budgets.
+- **Numeric components can use delta encoding** ([Optimization — compact exclusions](#optimization--compact-exclusions)). Group spans and predicate exclusions also work with string keys, which may remain literal.
+  Numeric IDs may delta-compress well when they correlate with expiry order, but filters,
+  visibility and backfills can break that correlation; measure it.
 - **A shared loop for compatible lists.** Plain/grouped lists (the H parameter), stable-order
   search results, priority sections and a group's own items can share a cursor format, validation
   and oracle when their adapters establish the same ordering, visibility and work contracts.
@@ -1392,8 +1405,11 @@ the saved response, and neither form proves that the client displayed a page onc
 
 The [published runner and findings](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/placement/FINDINGS.md)
 compare the same chain, plan, request parameters, threshold and checkpoint policy across all three
-contracts: 93 cases, 558 healthy/failure traversals. The following fixture has 1,200 distinct IDs
-in two ordinary coverage-growth-and-retirement cycles, with page size 50 and T = 8 KiB:
+contracts: 93 cases, 558 healthy/failure traversals. These are headroom/stress fixtures that
+exercise state growth, retirement and placement transitions; they do not model typical scroll
+depths or weight results by user behavior. The following coverage-growth stress fixture has
+1,200 distinct IDs in two ordinary growth-and-retirement cycles. With page size 50 and T = 8 KiB,
+it produces 24 full pages plus an empty terminal response: 25 measured response boundaries.
 
 | Independent checkpoint | One-way | Two-way, full replay | Two-way with recompute | Saving vs one-way |
 |---|---:|---:|---:|---:|
@@ -1406,9 +1422,10 @@ residency falls from 16 boundaries to 9 in either optional contract, while repla
 remain. Retrying every accepted request adds eight selector calls with recomputation. Full-replay
 two-way can use more total storage despite releasing vectors, as the second row shows.
 
-All 81 grouped cases (200 groups of 12, explicit reservation IDs, T = 2/4/8 KiB) spill on response
-1 and never return inline. These fixtures do not establish that every grouped workload behaves
-that way. Recompute still saves storage in 45 cases and costs more in 36, versus either comparator:
+All 81 reservation-heavy grouped stress cases (200 groups of 12, explicit reservation IDs,
+T = 2/4/8 KiB) spill on response 1 and never return inline. These fixtures do not establish that
+every grouped workload behaves that way. Recompute still saves storage in 45 cases and costs
+more in 36, versus either comparator:
 it can remove the first-spill response payload, but later handle-input responses retain their
 payloads plus extra replay metadata. Small pages make that recurring overhead more prominent.
 
@@ -1573,8 +1590,9 @@ history masquerading as bounded state. Measure the chosen policy and state its r
 ### Declared exceptions
 
 The fixed-data guarantee does not cover the following changes or visibility gaps:
-- **Groups merged mid-chain.** The merged group's items carry the surviving key and are skipped
-  until a refresh. Refresh the merged row live.
+- **Groups merged mid-chain.** Retained exclusions may not cover merged-in members. Apply a
+  declared live-change policy or restart; refreshing a displayed row alone does not reconcile
+  continuation state. See [grouped-result limits](#things-to-know).
 - **Sort keys that change.** An item whose key moves above the cursor is not seen again in this
   chain; one that moves below may be seen twice. Prefer sort keys that never change, or record a
   change as a new item with a new sequence number.
@@ -1597,7 +1615,7 @@ read it. Each stage needs the same few measurements:
 | the arrival rate, and the spans and gaps of the stage's groups | a time horizon: just above the gap that live groups rarely cross |
 | how deep chains go — pages per chain, from the request logs | the cap, and a count horizon: above the depth most chains reach |
 | the skip ratio — candidates scanned per row served | what a page really costs |
-| the live entries over the scroll — average and peak (Little's law: average = arrival rate × entry life) | the state cap, token bytes or server memory budget |
+| live entries by scroll depth, measured average and peak; at steady state, mean live entries ≈ new-entry rate × mean lifetime, with finite means and matching units | the state cap, token bytes or server memory budget; the Little's-law approximation is not a peak bound |
 
 ### Cost
 
@@ -1682,9 +1700,9 @@ Two query forms deserve particular care:
 
 PostgreSQL documents hash lookup for long constant `IN` lists in version 14 and `NOT IN` lists
 in version 15. This does not establish the same optimization for every parameterized array or
-generic plan. The version 19 development release notes describe conversion of eligible `NOT IN`
-subqueries to anti-joins; as checked on 19 November 2026, that version was still labelled a
-development release. Treat it as version-specific, not a portable guarantee.
+generic plan. PostgreSQL 19, released on 19 November 2026, can convert eligible `NOT IN`
+clauses to anti-joins when NULLs are not present. This does not remove `NOT IN`'s NULL-sensitive
+semantics. Treat the optimization as version-specific, not a portable guarantee.
 [PostgreSQL 14](https://www.postgresql.org/docs/14/release-14.html),
 [PostgreSQL 15](https://www.postgresql.org/docs/15/release-15.html),
 [PostgreSQL 19](https://www.postgresql.org/docs/19/release-19.html),
@@ -1827,17 +1845,22 @@ whole, one span stands for all of the group's items, and the list holds fewer en
 
 ### Possible implementation
 
-The executable reference makes three bounded contracts inspectable:
+The published reference modules and the portable self-check kit included in repository release
+v1.1 make these bounded checks inspectable:
 
 | Module | Checked scope |
 |---|---|
 | [Core and reservations](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/README.md) | Fixed finite sources, selected-row quotas, explicit-ID coverage/ownership, prepared buffers, safe retirement, capacity errors and retries. |
 | [Grouped coverage](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/grouped/README.md) | ID/span/hybrid coverage, partial reservations and group-aware retirement with supplied immutable membership/episodes; no grouped prepared buffers. |
 | [Placement](https://github.com/konstantinosch/kc_state_vector/blob/main/reference/placement/README.md) | One-way default and optional two-way/recompute contracts over those selectors, using simulated storage and named failure mutations. |
+| [Portable self-check kit](https://github.com/konstantinosch/kc_state_vector/blob/main/skills/kc-state-vector/references/self-check.md) | Standard-library independent oracle, synthetic fixtures and a capability-scoped checker for fixed-data, ungrouped staged pagers; no retained-coverage retirement audit. |
 
-These are ID-only standard-library models with independent unpaged oracles and retirement checks,
-not a production adapter library. CI runs their bounded tests and mutation catalogues. Dynamic
-horizons, compressed ownership and real-store durability are outside this published validation.
+The core and grouped models use independent unpaged oracles and retirement audits; placement
+wraps those selectors and reuses their checks. The separate self-check kit compares an adapter's
+observable output and declared capabilities without inspecting retained coverage. These ID-only,
+standard-library tools are validation aids, not a production adapter library. CI runs their bounded
+tests and mutation catalogues. Dynamic horizons, compressed ownership and real-store durability
+are outside this published validation.
 
 A reusable implementation would combine the vector and transition loop with application source
 adapters for ordering, visibility, exhaustion and group metadata, plus storage/protocol adapters
@@ -1846,6 +1869,10 @@ actual adapters; a checked model does not establish bounded query cost or worklo
 
 ### Testing
 
+- **Portable self-check:** use the [bundled kit](https://github.com/konstantinosch/kc_state_vector/blob/main/skills/kc-state-vector/references/self-check.md)
+  to compare a fixed-data, ungrouped staged pager with its independent oracle on synthetic fixtures.
+  Reports identify checks run and skipped by adapter capability; a pass covers only that profile
+  and those checks. The kit does not validate reservations, grouping, placement or query performance.
 - **Exact oracle:** for supported plans with fixed data/scope and sufficient state capacity,
   concatenated selections before presentation equal an independently computed unpaged result.
   Vary page size, batch size and candidate caps, including size 1 and page-size changes mid-chain.
